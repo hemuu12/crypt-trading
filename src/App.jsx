@@ -26,9 +26,16 @@ import {
 /*********************************
  * CONFIG & GLOBAL CONSTANTS
  *********************************/
-const WATCHED = ["BTCUSDT", "ETHUSDT", "BNBUSDT"];
-const API_REST = "https://api.binance.com/api/v3/klines";
-const WS_BASE = "wss://stream.binance.com:9443/ws";
+const WATCHED = [
+  "XRPUSD",
+  "ADAUSD",
+  "DOGEUSD",
+  "SOLUSD",
+  "ETHUSD",
+  "LTCUSD",
+];
+const API_REST = "https://api.binance.us/api/v3/klines";
+const WS_BASE = "wss://stream.binance.us:9443/ws";
 // Scanner runs on 1‑hour candles
 const INTERVAL = "1h";
 // RSI is sourced from the higher 4‑hour timeframe
@@ -149,13 +156,18 @@ function evaluate(sym, candles1h, closes4h) {
 
   const last = candles1h.at(-1);
 
-  /* ---------- updated RSI rule ---------- */
-  const rsiOK =
-    rsi > smaRSI &&       // above its SMA
-    rsi > rsiPrev &&      // rising
-    rsi < 80;             // not overbought
+  /* ---------- 4‑H RSI LONG‑TRADE RULES ---------- */
+  const rsiFacingUp     = rsi > rsiPrev;                                   // rising
+  const rsiAboveSMA     = rsi > smaRSI;                                    // already above
+  const aboutToCrossSMA = rsiPrev < smaRSI && rsi >= smaRSI * 0.98;        // within ±2 % of SMA
+  const notOverbought   = rsi < 80;
 
-  /* ---------- other rules ---------- */
+  const rsiOK =
+    (rsiAboveSMA || aboutToCrossSMA) &&   // above or about to cross
+    rsiFacingUp &&                        // pointing up
+    notOverbought;                        // < 80
+
+  /* ---------- other strategy flags ---------- */
   const flags = {
     trendOK: trend(candles1h) === "up",
     rsiOK,
@@ -167,16 +179,17 @@ function evaluate(sym, candles1h, closes4h) {
     liquidityOK: liquidityGrabPassed(last),
   };
 
+  /* ---------- scoring & meta ---------- */
   const baseScore6 = Object.values(flags).filter(Boolean).length;
-  const score10    = Math.round((baseScore6 / 6) * 10);   // 0‑10
+  const score10    = Math.round((baseScore6 / 6) * 10);   // 0‑10 scale
   const valid      = score10 >= 7;
   const grade      = score10 >= 9 ? "💎 Strong" : score10 >= 7 ? "🔥 Good" : "–";
 
   const notes = [];
   if (flags.supportOK && flags.priceActionOK) notes.push("Strong support confirmed");
-  if (flags.rsiOK && flags.cmoOK)           notes.push("Momentum reversal forming");
-  if (!flags.trendOK)                       notes.push("Up‑trend not confirmed");
-  if (!flags.liquidityOK)                   notes.push("Possible stop‑hunt, wait");
+  if (flags.rsiOK && flags.cmoOK)             notes.push("Momentum reversal forming");
+  if (!flags.trendOK)                         notes.push("Up‑trend not confirmed");
+  if (!flags.liquidityOK)                     notes.push("Possible stop‑hunt, wait");
 
   const entry = last.close;
 
@@ -195,6 +208,7 @@ function evaluate(sym, candles1h, closes4h) {
     updated: new Date(last.date).toLocaleTimeString(),
   };
 }
+
 
 
 
