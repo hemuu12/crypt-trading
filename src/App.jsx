@@ -17,6 +17,7 @@ import {
   YAxis,
   ZoomButtons,
   discontinuousTimeScaleProviderBuilder,
+  PriceCoordinate,
 } from "react-financial-charts";
 
 /*********************************
@@ -25,14 +26,17 @@ import {
 const WATCHED = ["BTCUSDT", "ETHUSDT", "BNBUSDT"];
 const API_REST = "https://api.binance.com/api/v3/klines";
 const WS_BASE = "wss://stream.binance.com:9443/ws";
-const INTERVAL = "1m";
-const HISTORY_LIMIT = 500; // candles to keep
+// Scanner runs on 1‑hour candles
+const INTERVAL = "1h";
+// RSI is sourced from the higher 4‑hour timeframe
+const RSI_INTERVAL = "4h";
+const HISTORY_LIMIT = 500; // candles to keep per timeframe
 
 /*********************************
  * DATA HELPERS
  *********************************/
-async function fetchInitial(symbol) {
-  const url = `${API_REST}?symbol=${symbol}&interval=${INTERVAL}&limit=${HISTORY_LIMIT}`;
+async function fetchInitial(symbol, interval) {
+  const url = `${API_REST}?symbol=${symbol}&interval=${interval}&limit=${HISTORY_LIMIT}`;
   const res = await fetch(url);
   const j = await res.json();
   return j.map((c) => ({
@@ -60,10 +64,16 @@ function calcCMO(vals, p = 14) {
   return out;
 }
 
-function indicators(closes) {
-  const r = RSI.calculate({ period: 14, values: closes });
-  const c = calcCMO(closes, 14);
-  return { rsi: r.at(-1) ?? null, rsiPrev: r.at(-2) ?? null, cmo: c.at(-1) ?? null, cmoPrev: c.at(-2) ?? null };
+function indicators(closes, closes4h) {
+  // 4‑hour RSI (period 14)
+  const rsiSeries = RSI.calculate({ period: 14, values: closes4h });
+  const rsi = rsiSeries.at(-1) ?? null;
+  const rsiPrev = rsiSeries.at(-2) ?? null;
+  // CMO still on 1‑hour closes
+  const cmoSeries = calcCMO(closes, 14);
+  const cmo = cmoSeries.at(-1) ?? null;
+  const cmoPrev = cmoSeries.at(-2) ?? null;
+  return { rsi, rsiPrev, cmo, cmoPrev };
 }
 
 function trend(candles) {
@@ -77,18 +87,18 @@ function score(flags) {
   return Object.values(flags).filter(Boolean).length; // number of true flags
 }
 
-function evaluate(sym, candles) {
-  if (candles.length < 30) return null;
-  const closes = candles.map((c) => c.close);
-  const { rsi, rsiPrev, cmo, cmoPrev } = indicators(closes);
+function evaluate(sym, candles1h, closes4h) {
+  if (candles1h.length < 30 || closes4h.length < 20) return null;
+  const closes1h = candles1h.map((c) => c.close);
+  const { rsi, rsiPrev, cmo, cmoPrev } = indicators(closes1h, closes4h);
   if (rsi == null || cmo == null) return null;
 
   const flags = {
-    trendOK: trend(candles) === "up",
+    trendOK: trend(candles1h) === "up",
     rsiOK: (rsi <= 30 && rsi > rsiPrev) || (rsi >= 40 && rsi <= 60 && rsi > rsiPrev),
     cmoOK: cmo >= -100 && cmo <= -60 && cmo > cmoPrev,
-    priceActionOK: candles.at(-1).close > candles.at(-1).open,
-    supportOK: candles.at(-1).low <= Math.min(...candles.slice(-20).map((c) => c.low)) * 1.005,
+    priceActionOK: candles1h.at(-1).close > candles1h.at(-1).open,
+    supportOK: candles1h.at(-1).low <= Math.min(...candles1h.slice(-20).map((c) => c.low)) * 1.005,
     liquidityOK: true, // placeholder
   };
 
@@ -98,6 +108,8 @@ function evaluate(sym, candles) {
   // 🎯 Console debug
   console.debug(`[EVAL] ${sym}`, { ...flags, rsi, cmo, score: sc, valid });
 
+  const lastClose = candles1h.at(-1).close;
+
   return {
     symbol: sym,
     rsi,
@@ -105,28 +117,60 @@ function evaluate(sym, candles) {
     score: sc,
     valid,
     flags,
-    entry: candles.at(-1).close,
-    target: +(candles.at(-1).close * 1.03).toFixed(4),
-    stop: +(candles.at(-1).close * 0.99).toFixed(4),
-    updated: new Date(candles.at(-1).date).toLocaleTimeString(),
+    entry: lastClose,
+    target: +(lastClose * 1.03).toFixed(4),
+    stop: +(lastClose * 0.99).toFixed(4),
+    updated: new Date(candles1h.at(-1).date).toLocaleTimeString(),
   };
 }
 
 /*********************************
  * CHART COMPONENT
  *********************************/
-function CandleChart({ data }) {
+function CandleChart({ data, trade }) {
   if (!data?.length) return null;
   const scaleProvider = discontinuousTimeScaleProviderBuilder().inputDateAccessor((d) => d.date);
   const { data: d, xScale, xAccessor, displayXAccessor } = scaleProvider(data);
   const start = xAccessor(d[Math.max(0, d.length - 100)]);
   const end = xAccessor(d[d.length - 1]);
   return (
-    <ChartCanvas height={400} width={800} ratio={1} margin={{ left: 50, right: 50, top: 10, bottom: 30 }} data={d} xScale={xScale} xAccessor={xAccessor} displayXAccessor={displayXAccessor} xExtents={[start, end]}>
+    <ChartCanvas
+      height={400}
+      width={800}
+      ratio={1}
+      margin={{ left: 50, right: 50, top: 10, bottom: 30 }}
+      data={d}
+      xScale={xScale}
+      xAccessor={xAccessor}
+      displayXAccessor={displayXAccessor}
+      xExtents={[start, end]}
+    >
       <Chart id={0} yExtents={(dd) => [dd.high, dd.low]}>
         <XAxis />
         <YAxis />
         <CandlestickSeries />
+        {trade && (
+          <>
+            <PriceCoordinate
+              at="right"
+              orient="right"
+              price={trade.entry}
+              displayFormat={(n) => `Entry → ${n}`}
+            />
+            <PriceCoordinate
+              at="right"
+              orient="right"
+              price={trade.target}
+              displayFormat={(n) => `Target 🎯 ${n}`}
+            />
+            <PriceCoordinate
+              at="right"
+              orient="right"
+              price={trade.stop}
+              displayFormat={(n) => `Stop ✋ ${n}`}
+            />
+          </>
+        )}
         <ZoomButtons />
       </Chart>
     </ChartCanvas>
@@ -140,13 +184,15 @@ export default function App() {
   const [signals, setSignals] = useState([]);
   const [loading, setLoading] = useState(true);
   const [activeSymbol, setActiveSymbol] = useState(null);
-  const candleMap = useRef(new Map());
+  const candleMap1h = useRef(new Map());
+  const closes4hMap = useRef(new Map());
 
   const refresh = () => {
     const out = [];
     for (const sym of WATCHED) {
-      const c = candleMap.current.get(sym) || [];
-      const ev = evaluate(sym, c);
+      const c1h = candleMap1h.current.get(sym) || [];
+      const c4h = closes4hMap.current.get(sym) || [];
+      const ev = evaluate(sym, c1h, c4h);
       if (ev) out.push(ev);
     }
     setSignals(out);
@@ -173,21 +219,27 @@ export default function App() {
         if (d.e !== "kline") return;
         const k = d.k;
         const candle = { date: new Date(k.t), open: +k.o, high: +k.h, low: +k.l, close: +k.c, volume: +k.v };
-        const arr = candleMap.current.get(d.s) || [];
+        const arr = candleMap1h.current.get(d.s) || [];
         if (k.x) {
-          candleMap.current.set(d.s, [...arr.slice(-HISTORY_LIMIT + 1), candle]);
+          candleMap1h.current.set(d.s, [...arr.slice(-HISTORY_LIMIT + 1), candle]);
           refresh();
         } else {
           const upd = [...arr];
           upd[upd.length - 1] = candle;
-          candleMap.current.set(d.s, upd);
+          candleMap1h.current.set(d.s, upd);
         }
       };
       wsMap.set(sym, ws);
     };
 
     (async () => {
-      await Promise.all(WATCHED.map(async (s) => candleMap.current.set(s, await fetchInitial(s))));
+      await Promise.all(
+        WATCHED.map(async (s) => {
+          candleMap1h.current.set(s, await fetchInitial(s, INTERVAL));
+          const data4h = await fetchInitial(s, RSI_INTERVAL);
+          closes4hMap.current.set(s, data4h.map((d) => d.close));
+        })
+      );
       setLoading(false);
       refresh();
       WATCHED.forEach(openWS);
@@ -199,9 +251,9 @@ export default function App() {
     };
   }, []);
 
-  // fallback refresh every minute
+  // periodic refresh every hour (safety)
   useEffect(() => {
-    const id = setInterval(refresh, 60_000);
+    const id = setInterval(refresh, 60 * 60 * 1000);
     return () => clearInterval(id);
   }, []);
 
@@ -209,7 +261,7 @@ export default function App() {
   return (
     <Box p={2}>
       <Typography variant="h4" gutterBottom>
-        Crypto Trade Scanner (Debug Mode)
+        Crypto Trade Scanner (1h / 4h RSI)
       </Typography>
       {loading ? (
         <CircularProgress />
@@ -240,10 +292,10 @@ export default function App() {
           ))}
         </Grid>
       )}
-      {activeSymbol && candleMap.current.has(activeSymbol) && (
+      {activeSymbol && candleMap1h.current.has(activeSymbol) && (
         <Box mt={4}>
-          <Typography variant="h5">{activeSymbol} Chart</Typography>
-          <CandleChart data={candleMap.current.get(activeSymbol)} />
+          <Typography variant="h5">{activeSymbol} – 1‑Hour Chart</Typography>
+          <CandleChart data={candleMap1h.current.get(activeSymbol)} trade={signals.find((s) => s.symbol === activeSymbol)} />
         </Box>
       )}
     </Box>
