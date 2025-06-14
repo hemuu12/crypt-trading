@@ -67,16 +67,28 @@ function calcCMO(vals, p = 14) {
   return out;
 }
 
-function indicators(closes, closes4h) {
+function indicators(closes1h, closes4h) {
+  // 4‑hour RSI (period 14)
   const rsiSeries = RSI.calculate({ period: 14, values: closes4h });
-  const cmoSeries = calcCMO(closes, 14);
+
+  // 14‑period SMA of that RSI
+  const smaRSI =
+    rsiSeries.length >= 14
+      ? rsiSeries.slice(-14).reduce((a, b) => a + b, 0) / 14
+      : null;
+
+  // 1‑hour CMO (unchanged)
+  const cmoSeries = calcCMO(closes1h, 14);
+
   return {
     rsi: rsiSeries.at(-1) ?? null,
     rsiPrev: rsiSeries.at(-2) ?? null,
+    smaRSI,
     cmo: cmoSeries.at(-1) ?? null,
     cmoPrev: cmoSeries.at(-2) ?? null,
   };
 }
+
 
 function trend(candles) {
   const seg = candles.slice(-10);
@@ -132,17 +144,21 @@ function evaluate(sym, candles1h, closes4h) {
   if (candles1h.length < 30 || closes4h.length < 20) return null;
 
   const closes1h = candles1h.map((c) => c.close);
-  const { rsi, rsiPrev, cmo, cmoPrev } = indicators(closes1h, closes4h);
-  if (rsi == null || cmo == null) return null;
+  const { rsi, rsiPrev, smaRSI, cmo, cmoPrev } = indicators(closes1h, closes4h);
+  if (rsi == null || smaRSI == null || cmo == null) return null;
 
   const last = candles1h.at(-1);
 
-  /* ---------- rules ---------- */
+  /* ---------- updated RSI rule ---------- */
+  const rsiOK =
+    rsi > smaRSI &&       // above its SMA
+    rsi > rsiPrev &&      // rising
+    rsi < 80;             // not overbought
+
+  /* ---------- other rules ---------- */
   const flags = {
     trendOK: trend(candles1h) === "up",
-    rsiOK:
-      (rsi <= 30 && rsi > rsiPrev) ||
-      (rsi >= 40 && rsi <= 60 && rsi > rsiPrev),
+    rsiOK,
     cmoOK: cmo >= -100 && cmo <= -60 && cmo > cmoPrev,
     priceActionOK: bullishPattern(candles1h),
     supportOK:
@@ -162,11 +178,12 @@ function evaluate(sym, candles1h, closes4h) {
   if (!flags.trendOK)                       notes.push("Up‑trend not confirmed");
   if (!flags.liquidityOK)                   notes.push("Possible stop‑hunt, wait");
 
-  const entry  = last.close;
+  const entry = last.close;
 
   return {
     symbol: sym,
     rsi,
+    smaRSI,
     cmo,
     score: score10,
     valid,
@@ -178,6 +195,7 @@ function evaluate(sym, candles1h, closes4h) {
     updated: new Date(last.date).toLocaleTimeString(),
   };
 }
+
 
 
 /*********************************
