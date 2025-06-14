@@ -27,12 +27,12 @@ import {
  * CONFIG & GLOBAL CONSTANTS
  *********************************/
 const WATCHED = [
-  "XRPUSD",
-  "ADAUSD",
-  "DOGEUSD",
-  "SOLUSD",
-  "ETHUSD",
-  "LTCUSD",
+  "BTCUSD", "ETHUSD", "BNBUSD", "SOLUSD", "ADAUSD", "XRPUSD",
+  "DOGEUSD", "AVAXUSD", "DOTUSD", "MATICUSD", "LTCUSD",
+  "LINKUSD", "NEARUSD", "ATOMUSD", "UNIUSD", "APTUSD",
+  "OPUSD", "FTMUSD", "ARBUSD", "LDOUSD",
+  "EGLDUSD", "AAVEUSD", "GRTUSD", "GALAUSD",
+  "SANDUSD", "CHZUSD", "MKRUSD", "SNXUSD"
 ];
 const API_REST = "https://api.binance.us/api/v3/klines";
 const WS_BASE = "wss://stream.binance.us:9443/ws";
