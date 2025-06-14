@@ -3,11 +3,14 @@ import { RSI } from "technicalindicators";
 import {
   Card,
   CardContent,
+  CardActionArea,
   Typography,
   CircularProgress,
   LinearProgress,
   Grid,
   Box,
+  Chip,
+  Stack,
 } from "@mui/material";
 import {
   ChartCanvas,
@@ -33,7 +36,7 @@ const RSI_INTERVAL = "4h";
 const HISTORY_LIMIT = 500; // candles to keep per timeframe
 
 /*********************************
- * DATA HELPERS
+ * DATA HELPERS (unchanged)
  *********************************/
 async function fetchInitial(symbol, interval) {
   const url = `${API_REST}?symbol=${symbol}&interval=${interval}&limit=${HISTORY_LIMIT}`;
@@ -65,15 +68,14 @@ function calcCMO(vals, p = 14) {
 }
 
 function indicators(closes, closes4h) {
-  // 4‑hour RSI (period 14)
   const rsiSeries = RSI.calculate({ period: 14, values: closes4h });
-  const rsi = rsiSeries.at(-1) ?? null;
-  const rsiPrev = rsiSeries.at(-2) ?? null;
-  // CMO still on 1‑hour closes
   const cmoSeries = calcCMO(closes, 14);
-  const cmo = cmoSeries.at(-1) ?? null;
-  const cmoPrev = cmoSeries.at(-2) ?? null;
-  return { rsi, rsiPrev, cmo, cmoPrev };
+  return {
+    rsi: rsiSeries.at(-1) ?? null,
+    rsiPrev: rsiSeries.at(-2) ?? null,
+    cmo: cmoSeries.at(-1) ?? null,
+    cmoPrev: cmoSeries.at(-2) ?? null,
+  };
 }
 
 function trend(candles) {
@@ -84,45 +86,198 @@ function trend(candles) {
 }
 
 function score(flags) {
-  return Object.values(flags).filter(Boolean).length; // number of true flags
+  return Object.values(flags).filter(Boolean).length;
 }
+
+
+ /* === Candlestick helpers ================================== */
+function isBullishEngulfing(prev, cur) {
+  return (
+    prev.close < prev.open &&          // red ➔
+    cur.close > cur.open &&           // green ➔
+    cur.open <= prev.close &&         // engulfs
+    cur.close >= prev.open
+  );
+}
+function isHammer(c) {
+  const body = Math.abs(c.close - c.open);
+  const range = c.high - c.low;
+  const lowerWick = Math.min(c.open, c.close) - c.low;
+  const upperWick = c.high - Math.max(c.open, c.close);
+  return range > 3 * body && lowerWick > 2 * body && upperWick < 0.3 * body;
+}
+function bullishPattern(candles) {
+  if (candles.length < 2) return false;
+  const prev = candles.at(-2);
+  const cur  = candles.at(-1);
+  return (
+    cur.close > cur.open ||
+    isBullishEngulfing(prev, cur) ||
+    isHammer(cur)
+  );
+}
+
+/* === Liquidity‑grab filter (rough) ========================= */
+function liquidityGrabPassed(c) {
+  const body       = Math.abs(c.close - c.open);
+  const lowerWick  = Math.min(c.open, c.close) - c.low;
+  if (lowerWick > body * 2 && c.close > c.open) return true;   // bullish rejection
+  if (lowerWick > body * 2 && c.close < c.open) return false;  // still hunting
+  return true;
+}
+
+
 
 function evaluate(sym, candles1h, closes4h) {
   if (candles1h.length < 30 || closes4h.length < 20) return null;
+
   const closes1h = candles1h.map((c) => c.close);
   const { rsi, rsiPrev, cmo, cmoPrev } = indicators(closes1h, closes4h);
   if (rsi == null || cmo == null) return null;
 
+  const last = candles1h.at(-1);
+
+  /* ---------- rules ---------- */
   const flags = {
     trendOK: trend(candles1h) === "up",
-    rsiOK: (rsi <= 30 && rsi > rsiPrev) || (rsi >= 40 && rsi <= 60 && rsi > rsiPrev),
+    rsiOK:
+      (rsi <= 30 && rsi > rsiPrev) ||
+      (rsi >= 40 && rsi <= 60 && rsi > rsiPrev),
     cmoOK: cmo >= -100 && cmo <= -60 && cmo > cmoPrev,
-    priceActionOK: candles1h.at(-1).close > candles1h.at(-1).open,
-    supportOK: candles1h.at(-1).low <= Math.min(...candles1h.slice(-20).map((c) => c.low)) * 1.005,
-    liquidityOK: true, // placeholder
+    priceActionOK: bullishPattern(candles1h),
+    supportOK:
+      last.low <=
+      Math.min(...candles1h.slice(-20).map((c) => c.low)) * 1.005,
+    liquidityOK: liquidityGrabPassed(last),
   };
 
-  const sc = score(flags);
-  const valid = sc >= 5; // require at least 5/6 conditions
+  const baseScore6 = Object.values(flags).filter(Boolean).length;
+  const score10    = Math.round((baseScore6 / 6) * 10);   // 0‑10
+  const valid      = score10 >= 7;
+  const grade      = score10 >= 9 ? "💎 Strong" : score10 >= 7 ? "🔥 Good" : "–";
 
-  // 🎯 Console debug
-  console.debug(`[EVAL] ${sym}`, { ...flags, rsi, cmo, score: sc, valid });
+  const notes = [];
+  if (flags.supportOK && flags.priceActionOK) notes.push("Strong support confirmed");
+  if (flags.rsiOK && flags.cmoOK)           notes.push("Momentum reversal forming");
+  if (!flags.trendOK)                       notes.push("Up‑trend not confirmed");
+  if (!flags.liquidityOK)                   notes.push("Possible stop‑hunt, wait");
 
-  const lastClose = candles1h.at(-1).close;
+  const entry  = last.close;
 
   return {
     symbol: sym,
     rsi,
     cmo,
-    score: sc,
+    score: score10,
     valid,
-    flags,
-    entry: lastClose,
-    target: +(lastClose * 1.03).toFixed(4),
-    stop: +(lastClose * 0.99).toFixed(4),
-    updated: new Date(candles1h.at(-1).date).toLocaleTimeString(),
+    grade,
+    notes: notes.join(". "),
+    entry,
+    target: +(entry * 1.03).toFixed(4),
+    stop:  +(entry * 0.99).toFixed(4),
+    updated: new Date(last.date).toLocaleTimeString(),
   };
 }
+
+
+/*********************************
+ * PRESENTATION HELPERS
+ *********************************/
+const scoreToColor = (s) =>
+  s >= 9 ? "success.main" : s >= 7 ? "warning.main" : "error.main";
+
+
+/*********************************
+ * CARD COMPONENT (replace old SignalCard)
+ *********************************/
+function SignalCard({ signal, onSelect }) {
+  const {
+    symbol,
+    updated,
+    score,      // 0‑10
+    grade,      // 💎 / 🔥 / –
+    entry,
+    target,
+    stop,
+    valid,
+    notes,
+  } = signal;
+
+  return (
+    <Grid item xs={12} sm={6} lg={4}>
+      <Card
+        sx={{ height: "100%", borderColor: scoreToColor(score) }}
+        variant="outlined"
+      >
+        <CardActionArea onClick={() => onSelect(symbol)} sx={{ height: "100%", p: 1 }}>
+          <CardContent>
+            {/* header row */}
+            <Stack
+              direction="row"
+              alignItems="center"
+              justifyContent="space-between"
+              spacing={1}
+              mb={1}
+            >
+              <Typography variant="h6" fontWeight={600}>
+                {symbol}
+              </Typography>
+              <Chip
+                size="small"
+                label={grade}
+                color={valid ? "success" : "default"}
+              />
+            </Stack>
+
+            <Typography variant="body2" gutterBottom>
+              Updated: {updated}
+            </Typography>
+
+            {/* trade levels */}
+            <Typography variant="caption" display="block">
+              🟢 Entry: {entry}
+            </Typography>
+            <Typography variant="caption" display="block">
+              🎯 Target: {target}
+            </Typography>
+            <Typography variant="caption" display="block">
+              ⛔ Stop: {stop}
+            </Typography>
+
+            {/* score bar */}
+            <LinearProgress
+              variant="determinate"
+              value={(score / 10) * 100}
+              sx={{
+                mt: 1,
+                height: 8,
+                borderRadius: 5,
+                bgcolor: "grey.300",
+                "& .MuiLinearProgress-bar": { bgcolor: scoreToColor(score) },
+              }}
+            />
+            <Typography variant="caption" display="block" mt={0.5}>
+              Score: {score}/10
+            </Typography>
+
+            {/* AI notes */}
+            {notes && (
+              <Typography
+                variant="caption"
+                color="text.secondary"
+                mt={1}
+                display="block"
+              >
+                🧠 {notes}
+              </Typography>
+            )}
+          </CardContent>
+        </CardActionArea>
+      </Card>
+    </Grid>
+  );
+}
+
 
 /*********************************
  * CHART COMPONENT
@@ -151,24 +306,9 @@ function CandleChart({ data, trade }) {
         <CandlestickSeries />
         {trade && (
           <>
-            <PriceCoordinate
-              at="right"
-              orient="right"
-              price={trade.entry}
-              displayFormat={(n) => `Entry → ${n}`}
-            />
-            <PriceCoordinate
-              at="right"
-              orient="right"
-              price={trade.target}
-              displayFormat={(n) => `Target 🎯 ${n}`}
-            />
-            <PriceCoordinate
-              at="right"
-              orient="right"
-              price={trade.stop}
-              displayFormat={(n) => `Stop ✋ ${n}`}
-            />
+            <PriceCoordinate price={trade.entry} at="right" orient="right" displayFormat={(p) => `Entry → ${p}`}/>
+            <PriceCoordinate price={trade.target} at="right" orient="right" displayFormat={(p) => `Target 🎯 ${p}`}/>
+            <PriceCoordinate price={trade.stop} at="right" orient="right" displayFormat={(p) => `Stop ✋ ${p}`}/>
           </>
         )}
         <ZoomButtons />
@@ -198,20 +338,15 @@ export default function App() {
     setSignals(out);
   };
 
-  // WebSocket + initial REST + reconnect
   useEffect(() => {
     const wsMap = new Map();
     const timers = new Map();
+
     const openWS = (sym, retry = 0) => {
       const ws = new WebSocket(`${WS_BASE}/${sym.toLowerCase()}@kline_${INTERVAL}`);
-      ws.onopen = () => {
-        console.log("[WS] Connected", sym);
-        retry = 0;
-      };
-      ws.onerror = (e) => console.error("[WS] error", sym, e);
+      ws.onopen = () => (retry = 0);
       ws.onclose = () => {
-        console.warn("[WS] closed", sym);
-        const delay = Math.min(30_000, 2 ** retry * 1_000);
+        const delay = Math.min(30000, 2 ** retry * 1000);
         timers.set(sym, setTimeout(() => openWS(sym, retry + 1), delay));
       };
       ws.onmessage = (e) => {
@@ -251,51 +386,41 @@ export default function App() {
     };
   }, []);
 
-  // periodic refresh every hour (safety)
   useEffect(() => {
     const id = setInterval(refresh, 60 * 60 * 1000);
     return () => clearInterval(id);
   }, []);
 
+
+
+ 
   /*************** RENDER ***************/
   return (
     <Box p={2}>
-      <Typography variant="h4" gutterBottom>
-        Crypto Trade Scanner (1h / 4h RSI)
+      <Typography variant="h4" fontWeight={700} gutterBottom>
+        Crypto Trade Scanner
       </Typography>
       {loading ? (
-        <CircularProgress />
+        <Box display="flex" alignItems="center" justifyContent="center" height="60vh">
+          <CircularProgress size={64} />
+        </Box>
       ) : (
-        <Grid container spacing={2}>
+        <Grid container spacing={2} mb={4}>
           {signals.map((s) => (
-            <Grid
-              item
-              xs={12}
-              md={6}
-              lg={4}
-              key={s.symbol}
-              onClick={() => setActiveSymbol(s.symbol)}
-              style={{ cursor: "pointer" }}
-            >
-              <Card variant="outlined">
-                <CardContent>
-                  <Typography variant="h6">{s.symbol}</Typography>
-                  <Typography variant="body2">Updated: {s.updated}</Typography>
-                  <Typography variant="body2">Score: {s.score}/6</Typography>
-                  <Typography variant="body2" color={s.valid ? "green" : "red"}>
-                    {s.valid ? "Valid Entry Signal ✅" : "Not Ready ❌"}
-                  </Typography>
-                  <LinearProgress variant="determinate" value={(s.score / 6) * 100} />
-                </CardContent>
-              </Card>
-            </Grid>
+            <SignalCard key={s.symbol} signal={s} onSelect={setActiveSymbol} />
           ))}
         </Grid>
       )}
+
       {activeSymbol && candleMap1h.current.has(activeSymbol) && (
-        <Box mt={4}>
-          <Typography variant="h5">{activeSymbol} – 1‑Hour Chart</Typography>
-          <CandleChart data={candleMap1h.current.get(activeSymbol)} trade={signals.find((s) => s.symbol === activeSymbol)} />
+        <Box mt={2}>
+          <Typography variant="h5" mb={1}>
+            {activeSymbol} – 1‑Hour Chart
+          </Typography>
+          <CandleChart
+            data={candleMap1h.current.get(activeSymbol)}
+            trade={signals.find((s) => s.symbol === activeSymbol)}
+          />
         </Box>
       )}
     </Box>
