@@ -27,13 +27,46 @@ import {
  * CONFIG & GLOBAL CONSTANTS
  *********************************/
 const WATCHED = [
-  "BTCUSD", "ETHUSD", "BNBUSD", "SOLUSD", "ADAUSD", "XRPUSD",
-  "DOGEUSD", "AVAXUSD", "DOTUSD", "MATICUSD", "LTCUSD",
-  "LINKUSD", "NEARUSD", "ATOMUSD", "UNIUSD", "APTUSD",
-  "OPUSD", "FTMUSD", "ARBUSD", "LDOUSD",
-  "EGLDUSD", "AAVEUSD", "GRTUSD", "GALAUSD",
-  "SANDUSD", "CHZUSD", "MKRUSD", "SNXUSD"
+  "BTCUSD",
+  "ETHUSD",
+  "BNBUSD",
+  "SOLUSD",
+  "ADAUSD",
+  "DOGEUSD",
+  "XLMUSD",
+  "DOTUSD",
+  "LTCUSD",
+  "BCHUSD",
+  "LINKUSD",
+  "VETUSD",
+  "AVAXUSD",
+  "ALGOUSD",
+  "UNIUSD",
+  "SANDUSD",
+  "AAVEUSD",
+  "THETAUSD",
+  "FETUSD",
+  "FLOWUSD",
+  
+  "NEARUSD",
+  "CRVUSD",
+  "GRTUSD",
+  "HBARUSD",
+  "SHIBUSD",
+  "SUIUSD",
+  "BONKUSD",
+  "ONEUSD",
+  "GALAUSD",
+  "PEPEUSD",
+  "OPUSD",
+  "DGBUSD",
+  "ZILUSD",
+  "LPTUSD",
+  "ENSUSD",
+  "XRPUSD"
 ];
+
+
 const API_REST = "https://api.binance.us/api/v3/klines";
 const WS_BASE = "wss://stream.binance.us:9443/ws";
 // Scanner runs on 1‑hour candles
