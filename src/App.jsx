@@ -187,7 +187,8 @@ function evaluate(sym, candles1h, closes4h) {
   /* ---------- scoring & meta ---------- */
   const baseScore6 = Object.values(flags).filter(Boolean).length;
   const score10    = Math.round((baseScore6 / 6) * 10);   // 0‑10 scale
-  const valid      = score10 >= 7;
+  const valid = score10 >= 7 && flags.trendOK;
+
   const grade      = score10 >= 9 ? "💎 Strong" : score10 >= 7 ? "🔥 Good" : "–";
 
   const notes = [];
@@ -223,38 +224,50 @@ function evaluateShort(sym, candles1h, closes4h) {
 
   const last = candles1h.at(-1);
 
-  // RSI Short Conditions
+  // ✅ 1. Downtrend Conditions (LH + LL)
+  const isDowntrend = downtrend(candles1h) === "down";
+
+  // ✅ 2. RSI Logic
   const rsiFalling = rsi < rsiPrev;
   const rsiBelowSMA = rsi < smaRSI;
   const notOversold = rsi > 20;
   const rsiOK = rsiBelowSMA && rsiFalling && notOversold;
 
-  // CMO Short Conditions
+  // ✅ 3. ChandeMO Logic
   const cmoUTurn = cmo < cmoPrev && cmoPrev > 90;
-  const cmoOK = cmo <= 100 && cmo >= 50 && cmoUTurn;
+  const cmoOK = cmo >= 50 && cmo <= 100 && cmoUTurn;
 
-  // Trend
-  const trendOK = downtrend(candles1h) === "down";
-
+  // ✅ 4. Resistance (optional for 1 point)
   const nearResistance = last.high >= Math.max(...candles1h.slice(-20).map((c) => c.high)) * 0.995;
 
   const flags = {
-    trendOK,
+    trendOK: isDowntrend,
     rsiOK,
     cmoOK,
     resistanceOK: nearResistance,
   };
 
-  const baseScore = score(flags);
-  const score10 = Math.round((baseScore / 4) * 10);
-  const valid = baseScore === 4;
-  const almost = trendOK && cmoOK && !rsiOK;
+  const score10 =
+    (flags.trendOK ? 3 : 0) +
+    (flags.rsiOK ? 3 : 0) +
+    (flags.cmoOK ? 3 : 0) +
+    (flags.resistanceOK ? 1 : 0);
+
+  const valid = flags.trendOK && flags.rsiOK && flags.cmoOK;
+const almost = flags.trendOK && flags.rsiOK && !flags.cmoOK;
+
+  const grade = valid
+    ? score10 >= 9 ? "💎 Strong" : "🔥 Good"
+    : almost ? "🕒 Almost" : "–";
 
   const notes = [];
   if (flags.trendOK) notes.push("Downtrend confirmed");
   if (flags.rsiOK) notes.push("RSI below SMA and falling");
-  if (flags.cmoOK) notes.push("CMO turning from top");
-  if (flags.resistanceOK) notes.push("Near resistance");
+  else if (!notOversold) notes.push("RSI oversold or turning up");
+  if (flags.cmoOK) notes.push("CMO U-turn from top zone");
+  if (flags.resistanceOK) notes.push("Near resistance zone");
+
+  const entry = last.close;
 
   return {
     symbol: sym,
@@ -265,11 +278,11 @@ function evaluateShort(sym, candles1h, closes4h) {
     valid,
     almost,
     type: "short",
-    grade: valid ? (score10 >= 9 ? "💎 Strong" : "🔥 Good") : almost ? "🕒 Almost" : "–",
+    grade,
     notes: notes.join(". "),
-    entry: last.close,
-    stop: +(last.close * 1.01).toFixed(4),
-    target: +(last.close * 0.97).toFixed(4),
+    entry,
+    stop: +(entry * 1.01).toFixed(4),
+    target: +(entry * 0.97).toFixed(4),
     updated: new Date(last.date).toLocaleTimeString(),
   };
 }
@@ -368,9 +381,11 @@ function SignalCard({ signal, onSelect }) {
                 🧠 {notes}
               </Typography>
             )}
-            <Typography variant="body2">
-              📉 Type: {signal.type === "short" ? "SHORT" : "LONG"}
-            </Typography>
+           {valid || signal.almost ? (
+  <Typography variant="body2">
+    📉 Type: {signal.type === "short" ? "SHORT" : "LONG"}
+  </Typography>
+) : null}
           </CardContent>
         </CardActionArea>
       </Card>
@@ -438,13 +453,14 @@ const refresh = () => {
     const c4h = closes4hMap.current.get(sym) || [];
 
     const long = evaluate(sym, c1h, c4h);
-    if (long) longSignals.push(long);
+    if (long?.valid || long?.almost) longSignals.push(long);
 
     const short = evaluateShort(sym, c1h, c4h);
-    if (short) shortSignals.push(short);
-  }
-  setSignals([...longSignals, ...shortSignals]);
-};
+
+    if (short?.valid || short?.almost) shortSignals.push(short);
+      }
+      setSignals([...longSignals, ...shortSignals]);
+    };
 
   useEffect(() => {
     const wsMap = new Map();
