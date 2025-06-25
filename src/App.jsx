@@ -145,7 +145,12 @@ function liquidityGrabPassed(c) {
   return true;
 }
 
-
+function downtrend(candles) {
+  const seg = candles.slice(-10);
+  const lh = seg.every((d, i) => i === 0 || d.high <= seg[i - 1].high);
+  const ll = seg.every((d, i) => i === 0 || d.low <= seg[i - 1].low);
+  return lh && ll ? "down" : "up";
+}
 
 function evaluate(sym, candles1h, closes4h) {
   if (candles1h.length < 30 || closes4h.length < 20) return null;
@@ -205,6 +210,66 @@ function evaluate(sym, candles1h, closes4h) {
     entry,
     target: +(entry * 1.03).toFixed(4),
     stop:  +(entry * 0.99).toFixed(4),
+    updated: new Date(last.date).toLocaleTimeString(),
+  };
+}
+
+function evaluateShort(sym, candles1h, closes4h) {
+  if (candles1h.length < 30 || closes4h.length < 20) return null;
+
+  const closes1h = candles1h.map((c) => c.close);
+  const { rsi, rsiPrev, smaRSI, cmo, cmoPrev } = indicators(closes1h, closes4h);
+  if (rsi == null || smaRSI == null || cmo == null) return null;
+
+  const last = candles1h.at(-1);
+
+  // RSI Short Conditions
+  const rsiFalling = rsi < rsiPrev;
+  const rsiBelowSMA = rsi < smaRSI;
+  const notOversold = rsi > 20;
+  const rsiOK = rsiBelowSMA && rsiFalling && notOversold;
+
+  // CMO Short Conditions
+  const cmoUTurn = cmo < cmoPrev && cmoPrev > 90;
+  const cmoOK = cmo <= 100 && cmo >= 50 && cmoUTurn;
+
+  // Trend
+  const trendOK = downtrend(candles1h) === "down";
+
+  const nearResistance = last.high >= Math.max(...candles1h.slice(-20).map((c) => c.high)) * 0.995;
+
+  const flags = {
+    trendOK,
+    rsiOK,
+    cmoOK,
+    resistanceOK: nearResistance,
+  };
+
+  const baseScore = score(flags);
+  const score10 = Math.round((baseScore / 4) * 10);
+  const valid = baseScore === 4;
+  const almost = trendOK && cmoOK && !rsiOK;
+
+  const notes = [];
+  if (flags.trendOK) notes.push("Downtrend confirmed");
+  if (flags.rsiOK) notes.push("RSI below SMA and falling");
+  if (flags.cmoOK) notes.push("CMO turning from top");
+  if (flags.resistanceOK) notes.push("Near resistance");
+
+  return {
+    symbol: sym,
+    rsi,
+    smaRSI,
+    cmo,
+    score: score10,
+    valid,
+    almost,
+    type: "short",
+    grade: valid ? (score10 >= 9 ? "💎 Strong" : "🔥 Good") : almost ? "🕒 Almost" : "–",
+    notes: notes.join(". "),
+    entry: last.close,
+    stop: +(last.close * 1.01).toFixed(4),
+    target: +(last.close * 0.97).toFixed(4),
     updated: new Date(last.date).toLocaleTimeString(),
   };
 }
@@ -303,6 +368,9 @@ function SignalCard({ signal, onSelect }) {
                 🧠 {notes}
               </Typography>
             )}
+            <Typography variant="body2">
+              📉 Type: {signal.type === "short" ? "SHORT" : "LONG"}
+            </Typography>
           </CardContent>
         </CardActionArea>
       </Card>
@@ -341,6 +409,9 @@ function CandleChart({ data, trade }) {
             <PriceCoordinate price={trade.entry} at="right" orient="right" displayFormat={(p) => `Entry → ${p}`}/>
             <PriceCoordinate price={trade.target} at="right" orient="right" displayFormat={(p) => `Target 🎯 ${p}`}/>
             <PriceCoordinate price={trade.stop} at="right" orient="right" displayFormat={(p) => `Stop ✋ ${p}`}/>
+               {trade.type === "short" && (
+      <PriceCoordinate price={trade.entry} at="left" orient="left" displayFormat={() => "⬇"} />
+    )}
           </>
         )}
         <ZoomButtons />
@@ -359,16 +430,21 @@ export default function App() {
   const candleMap1h = useRef(new Map());
   const closes4hMap = useRef(new Map());
 
-  const refresh = () => {
-    const out = [];
-    for (const sym of WATCHED) {
-      const c1h = candleMap1h.current.get(sym) || [];
-      const c4h = closes4hMap.current.get(sym) || [];
-      const ev = evaluate(sym, c1h, c4h);
-      if (ev) out.push(ev);
-    }
-    setSignals(out);
-  };
+const refresh = () => {
+  const longSignals = [];
+  const shortSignals = [];
+  for (const sym of WATCHED) {
+    const c1h = candleMap1h.current.get(sym) || [];
+    const c4h = closes4hMap.current.get(sym) || [];
+
+    const long = evaluate(sym, c1h, c4h);
+    if (long) longSignals.push(long);
+
+    const short = evaluateShort(sym, c1h, c4h);
+    if (short) shortSignals.push(short);
+  }
+  setSignals([...longSignals, ...shortSignals]);
+};
 
   useEffect(() => {
     const wsMap = new Map();
