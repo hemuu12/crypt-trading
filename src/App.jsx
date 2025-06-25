@@ -442,25 +442,32 @@ export default function App() {
   const [signals, setSignals] = useState([]);
   const [loading, setLoading] = useState(true);
   const [activeSymbol, setActiveSymbol] = useState(null);
+  const [filterType, setFilterType] = useState("all"); // 'all' | 'long' | 'short'
+
   const candleMap1h = useRef(new Map());
   const closes4hMap = useRef(new Map());
 
-const refresh = () => {
-  const longSignals = [];
-  const shortSignals = [];
-  for (const sym of WATCHED) {
-    const c1h = candleMap1h.current.get(sym) || [];
-    const c4h = closes4hMap.current.get(sym) || [];
+  const refresh = () => {
+    const longSignals = [];
+    const shortSignals = [];
 
-    const long = evaluate(sym, c1h, c4h);
-    if (long?.valid || long?.almost) longSignals.push(long);
+    for (const sym of WATCHED) {
+      const c1h = candleMap1h.current.get(sym) || [];
+      const c4h = closes4hMap.current.get(sym) || [];
 
-    const short = evaluateShort(sym, c1h, c4h);
-
-    if (short?.valid || short?.almost) shortSignals.push(short);
+      const long = evaluate(sym, c1h, c4h);
+      if (long?.valid || long?.almost) {
+        longSignals.push({ ...long, type: "long" }); // <-- ensure type
       }
-      setSignals([...longSignals, ...shortSignals]);
-    };
+
+      const short = evaluateShort(sym, c1h, c4h);
+      if (short?.valid || short?.almost) {
+        shortSignals.push(short);
+      }
+    }
+
+    setSignals([...longSignals, ...shortSignals]);
+  };
 
   useEffect(() => {
     const wsMap = new Map();
@@ -477,7 +484,14 @@ const refresh = () => {
         const d = JSON.parse(e.data);
         if (d.e !== "kline") return;
         const k = d.k;
-        const candle = { date: new Date(k.t), open: +k.o, high: +k.h, low: +k.l, close: +k.c, volume: +k.v };
+        const candle = {
+          date: new Date(k.t),
+          open: +k.o,
+          high: +k.h,
+          low: +k.l,
+          close: +k.c,
+          volume: +k.v,
+        };
         const arr = candleMap1h.current.get(d.s) || [];
         if (k.x) {
           candleMap1h.current.set(d.s, [...arr.slice(-HISTORY_LIMIT + 1), candle]);
@@ -515,23 +529,51 @@ const refresh = () => {
     return () => clearInterval(id);
   }, []);
 
+  // 🔎 Filter logic based on filterType
+  const filteredSignals = signals.filter((s) => {
+    if (!s.valid && !s.almost) return false;
+    if (filterType === "long") return s.type !== "short";
+    if (filterType === "short") return s.type === "short";
+    return true;
+  });
 
-
- 
   /*************** RENDER ***************/
   return (
     <Box p={2}>
       <Typography variant="h4" fontWeight={700} gutterBottom>
         Crypto Trade Scanner
       </Typography>
+
+      {/* 🔘 Filter Buttons */}
+      <Stack direction="row" spacing={2} mb={2}>
+        <Chip
+          label="All"
+          variant={filterType === "all" ? "filled" : "outlined"}
+          color="primary"
+          onClick={() => setFilterType("all")}
+        />
+        <Chip
+          label="LONG"
+          variant={filterType === "long" ? "filled" : "outlined"}
+          color="success"
+          onClick={() => setFilterType("long")}
+        />
+        <Chip
+          label="SHORT"
+          variant={filterType === "short" ? "filled" : "outlined"}
+          color="error"
+          onClick={() => setFilterType("short")}
+        />
+      </Stack>
+
       {loading ? (
         <Box display="flex" alignItems="center" justifyContent="center" height="60vh">
           <CircularProgress size={64} />
         </Box>
       ) : (
         <Grid container spacing={2} mb={4}>
-          {signals.map((s) => (
-            <SignalCard key={s.symbol} signal={s} onSelect={setActiveSymbol} />
+          {filteredSignals.map((s) => (
+            <SignalCard key={s.symbol + s.type} signal={s} onSelect={setActiveSymbol} />
           ))}
         </Grid>
       )}
