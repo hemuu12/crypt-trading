@@ -585,18 +585,6 @@ export default function App() {
           ))}
         </Grid>
       )}
-
-      {activeSymbol && candleMap1h.current.has(activeSymbol) && (
-        <Box mt={2}>
-          <Typography variant="h5" mb={1}>
-            {activeSymbol} – 1‑Hour Chart
-          </Typography>
-          <CandleChart
-            data={candleMap1h.current.get(activeSymbol)}
-            trade={signals.find((s) => s.symbol === activeSymbol)}
-          />
-        </Box>
-      )}
     </Box>
   );
 }
