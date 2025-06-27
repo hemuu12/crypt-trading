@@ -47,7 +47,6 @@ const WATCHED = [
   "THETAUSD",
   "FETUSD",
   "FLOWUSD",
-  
   "NEARUSD",
   "CRVUSD",
   "GRTUSD",
@@ -63,7 +62,8 @@ const WATCHED = [
   "ZILUSD",
   "LPTUSD",
   "ENSUSD",
-  "XRPUSD"
+  "XRPUSD",
+  "BATUSD"
 ];
 
 
@@ -132,13 +132,11 @@ function indicators(closes1h, closes4h) {
 
 function trend(candles) {
   const seg = candles.slice(-10);
-  const hh = seg.every((d, i) => (i === 0 ? true : d.high >= seg[i - 1].high));
-  const hl = seg.every((d, i) => (i === 0 ? true : d.low >= seg[i - 1].low));
-  return hh && hl ? "up" : "down";
-}
-
-function score(flags) {
-  return Object.values(flags).filter(Boolean).length;
+  const highs = seg.map((c) => c.high);
+  const lows = seg.map((c) => c.low);
+  const highSlope = highs[highs.length - 1] - highs[0];
+  const lowSlope = lows[lows.length - 1] - lows[0];
+  return highSlope > 0 && lowSlope > 0 ? "up" : "down";
 }
 
 
@@ -220,7 +218,9 @@ function evaluate(sym, candles1h, closes4h) {
   /* ---------- scoring & meta ---------- */
   const baseScore6 = Object.values(flags).filter(Boolean).length;
   const score10    = Math.round((baseScore6 / 6) * 10);   // 0‑10 scale
-  const valid = score10 >= 7 && flags.trendOK;
+if (!flags.trendOK) return null;
+const valid = score10 >= 7;
+
 
   const grade      = score10 >= 9 ? "💎 Strong" : score10 >= 7 ? "🔥 Good" : "–";
 
