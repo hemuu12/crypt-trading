@@ -468,6 +468,10 @@ function CandleChart({ data, trade }) {
 /*********************************
  * MAIN APP COMPONENT
  *********************************/
+
+
+
+
 export default function App() {
   const [signals, setSignals] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -487,7 +491,7 @@ export default function App() {
 
       const long = evaluate(sym, c1h, c4h);
       if (long?.valid || long?.almost) {
-        longSignals.push({ ...long, type: "long" }); // <-- ensure type
+        longSignals.push({ ...long, type: "long" });
       }
 
       const short = evaluateShort(sym, c1h, c4h);
@@ -524,8 +528,16 @@ export default function App() {
         };
         const arr = candleMap1h.current.get(d.s) || [];
         if (k.x) {
-          candleMap1h.current.set(d.s, [...arr.slice(-HISTORY_LIMIT + 1), candle]);
-          refresh();
+          const updatedCandles = [...arr.slice(-HISTORY_LIMIT + 1), candle];
+          candleMap1h.current.set(d.s, updatedCandles);
+
+          const closes4h = closes4hMap.current.get(d.s) || [];
+          const newLong = evaluate(d.s, updatedCandles, closes4h);
+          const newShort = evaluateShort(d.s, updatedCandles, closes4h);
+
+          if ((newLong?.valid || newShort?.valid)) {
+            refresh();
+          }
         } else {
           const upd = [...arr];
           upd[upd.length - 1] = candle;
@@ -559,7 +571,6 @@ export default function App() {
     return () => clearInterval(id);
   }, []);
 
-  // 🔎 Filter logic based on filterType
   const filteredSignals = signals.filter((s) => {
     if (!s.valid && !s.almost) return false;
     if (filterType === "long") return s.type !== "short";
@@ -567,14 +578,12 @@ export default function App() {
     return true;
   });
 
-  /*************** RENDER ***************/
   return (
     <Box p={2}>
       <Typography variant="h4" fontWeight={700} gutterBottom>
         Crypto Trade Scanner
       </Typography>
 
-      {/* 🔘 Filter Buttons */}
       <Stack direction="row" spacing={2} mb={2}>
         <Chip
           label="All"
