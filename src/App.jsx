@@ -26,6 +26,7 @@ import {
 /*********************************
  * CONFIG & GLOBAL CONSTANTS
  *********************************/
+
 const WATCHED = [
   "BTCUSD", "ETHUSD", "BNBUSD", "SOLUSD", "ADAUSD", "DOGEUSD", "XRPUSD", "DOTUSD", "LTCUSD", "BCHUSD",
   "LINKUSD", "XLMUSD", "ATOMUSD", "FILUSD", "TRXUSD", "ETCUSD", "EOSUSD", "AAVEUSD", "UNIUSD", "MKRUSD",
@@ -36,7 +37,6 @@ const WATCHED = [
   "TUSDUSD", "KAVAUSD", "BATUSD", "DGBUSD", "ONEUSD", "SPELLUSD", 
   "DOGEUSD", "BALUSD", "YFIUSD", "ENSUSD", "COMPUSD", "BLURUSD"
 ];
-
 
 
 const API_REST = "https://api.binance.us/api/v3/klines";
@@ -104,14 +104,11 @@ function indicators(closes1h, closes4h) {
 
 function trend(candles) {
   const seg = candles.slice(-10);
-  let hh = 0, hl = 0;
-  for (let i = 1; i < seg.length; i++) {
-    if (seg[i].high > seg[i - 1].high) hh++;
-    if (seg[i].low > seg[i - 1].low) hl++;
-  }
-  const hhPercent = hh / 9;
-  const hlPercent = hl / 9;
-  return hhPercent >= 0.7 && hlPercent >= 0.7 ? "up" : "down";
+  const highs = seg.map((c) => c.high);
+  const lows = seg.map((c) => c.low);
+  const highSlope = highs[highs.length - 1] - highs[0];
+  const lowSlope = lows[lows.length - 1] - lows[0];
+  return highSlope > 0 && lowSlope > 0 ? "up" : "down";
 }
 
 
@@ -584,6 +581,18 @@ export default function App() {
             <SignalCard key={s.symbol + s.type} signal={s} onSelect={setActiveSymbol} />
           ))}
         </Grid>
+      )}
+
+      {activeSymbol && candleMap1h.current.has(activeSymbol) && (
+        <Box mt={2}>
+          <Typography variant="h5" mb={1}>
+            {activeSymbol} – 1‑Hour Chart
+          </Typography>
+          <CandleChart
+            data={candleMap1h.current.get(activeSymbol)}
+            trade={signals.find((s) => s.symbol === activeSymbol)}
+          />
+        </Box>
       )}
     </Box>
   );
