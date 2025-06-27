@@ -27,44 +27,16 @@ import {
  * CONFIG & GLOBAL CONSTANTS
  *********************************/
 const WATCHED = [
-  "BTCUSD",
-  "ETHUSD",
-  "BNBUSD",
-  "SOLUSD",
-  "ADAUSD",
-  "DOGEUSD",
-  "XLMUSD",
-  "DOTUSD",
-  "LTCUSD",
-  "BCHUSD",
-  "LINKUSD",
-  "VETUSD",
-  "AVAXUSD",
-  "ALGOUSD",
-  "UNIUSD",
-  "SANDUSD",
-  "AAVEUSD",
-  "THETAUSD",
-  "FETUSD",
-  "FLOWUSD",
-  "NEARUSD",
-  "CRVUSD",
-  "GRTUSD",
-  "HBARUSD",
-  "SHIBUSD",
-  "SUIUSD",
-  "BONKUSD",
-  "ONEUSD",
-  "GALAUSD",
-  "PEPEUSD",
-  "OPUSD",
-  "DGBUSD",
-  "ZILUSD",
-  "LPTUSD",
-  "ENSUSD",
-  "XRPUSD",
-  "BATUSD"
+  "BTCUSD", "ETHUSD", "BNBUSD", "SOLUSD", "ADAUSD", "DOGEUSD", "XRPUSD", "DOTUSD", "LTCUSD", "BCHUSD",
+  "LINKUSD", "XLMUSD", "ATOMUSD", "FILUSD", "TRXUSD", "ETCUSD", "EOSUSD", "AAVEUSD", "UNIUSD", "MKRUSD",
+  "NEARUSD", "AVAXUSD", "FTMUSD", "GRTUSD", "CRVUSD", "SUSHIUSD", "1INCHUSD", "LDOUSD",  "OPUSD",
+  "ARBUSD", "RNDRUSD", "IMXUSD", "FETUSD", "COTIUSD", "SANDUSD", "MANAUSD", "GALAUSD", "APEUSD",
+  "PEPEUSD", "SHIBUSD", "SUIUSD", "BONKUSD", "JASMYUSD", "XECUSD", "LPTUSD", "ZILUSD", "ENJUSD",
+  "STORJUSD", "SKLUSD", "OCEANUSD", "ANKRUSD", "VETUSD", "FLOWUSD", "CHZUSD", "ALGOUSD", "HBARUSD", "RLCUSD",
+  "TUSDUSD", "KAVAUSD", "BATUSD", "DGBUSD", "ONEUSD", "SPELLUSD", 
+  "DOGEUSD", "BALUSD", "YFIUSD", "ENSUSD", "COMPUSD", "BLURUSD"
 ];
+
 
 
 const API_REST = "https://api.binance.us/api/v3/klines";
@@ -132,11 +104,14 @@ function indicators(closes1h, closes4h) {
 
 function trend(candles) {
   const seg = candles.slice(-10);
-  const highs = seg.map((c) => c.high);
-  const lows = seg.map((c) => c.low);
-  const highSlope = highs[highs.length - 1] - highs[0];
-  const lowSlope = lows[lows.length - 1] - lows[0];
-  return highSlope > 0 && lowSlope > 0 ? "up" : "down";
+  let hh = 0, hl = 0;
+  for (let i = 1; i < seg.length; i++) {
+    if (seg[i].high > seg[i - 1].high) hh++;
+    if (seg[i].low > seg[i - 1].low) hl++;
+  }
+  const hhPercent = hh / 9;
+  const hlPercent = hl / 9;
+  return hhPercent >= 0.7 && hlPercent >= 0.7 ? "up" : "down";
 }
 
 
