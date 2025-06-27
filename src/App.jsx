@@ -164,18 +164,14 @@ function evaluate(sym, candles1h, closes4h) {
 
   const last = candles1h.at(-1);
 
-  /* ---------- 4‑H RSI LONG‑TRADE RULES ---------- */
-  const rsiFacingUp     = rsi > rsiPrev;                                   // rising
-  const rsiAboveSMA     = rsi > smaRSI;                                    // already above
-  const aboutToCrossSMA = rsiPrev < smaRSI && rsi >= smaRSI * 0.98;        // within ±2 % of SMA
+  // === RSI Logic ===
+  const rsiFacingUp     = rsi > rsiPrev;
+  const rsiAboveSMA     = rsi > smaRSI;
+  const aboutToCrossSMA = rsiPrev < smaRSI && rsi >= smaRSI * 0.98;
   const notOverbought   = rsi < 80;
+  const rsiOK = (rsiAboveSMA || aboutToCrossSMA) && rsiFacingUp && notOverbought;
 
-  const rsiOK =
-    (rsiAboveSMA || aboutToCrossSMA) &&   // above or about to cross
-    rsiFacingUp &&                        // pointing up
-    notOverbought;                        // < 80
-
-  /* ---------- other strategy flags ---------- */
+  // === Other Flags ===
   const flags = {
     trendOK: trend(candles1h) === "up",
     rsiOK,
@@ -187,20 +183,33 @@ function evaluate(sym, candles1h, closes4h) {
     liquidityOK: liquidityGrabPassed(last),
   };
 
-  /* ---------- scoring & meta ---------- */
   const baseScore6 = Object.values(flags).filter(Boolean).length;
-  const score10    = Math.round((baseScore6 / 6) * 10);   // 0‑10 scale
-if (!flags.trendOK) return null;
-const valid = score10 >= 7;
+  const score10 = Math.round((baseScore6 / 6) * 10);
 
+  if (!flags.trendOK) return null;
+  const valid = score10 >= 7;
 
-  const grade      = score10 >= 9 ? "💎 Strong" : score10 >= 7 ? "🔥 Good" : "–";
+  const grade = score10 >= 9 ? "💎 Strong" : score10 >= 7 ? "🔥 Good" : "–";
 
+  // 🧠 Detailed Notes
   const notes = [];
-  if (flags.supportOK && flags.priceActionOK) notes.push("Strong support confirmed");
-  if (flags.rsiOK && flags.cmoOK)             notes.push("Momentum reversal forming");
-  if (!flags.trendOK)                         notes.push("Up‑trend not confirmed");
-  if (!flags.liquidityOK)                     notes.push("Possible stop‑hunt, wait");
+  if (flags.trendOK) notes.push("Uptrend confirmed");
+  else notes.push("Uptrend not confirmed");
+  
+  if (flags.rsiOK) notes.push("RSI is rising and above/near SMA");
+  else notes.push("RSI not favorable");
+
+  if (flags.cmoOK) notes.push("CMO turning up from oversold zone");
+  else notes.push("CMO not supportive");
+
+  if (flags.priceActionOK) notes.push("Bullish price action detected");
+  else notes.push("No bullish candle pattern");
+
+  if (flags.supportOK) notes.push("Near strong support level");
+  else notes.push("Support not clearly visible");
+
+  if (flags.liquidityOK) notes.push("No signs of stop-hunt");
+  else notes.push("Possible liquidity grab in progress");
 
   const entry = last.close;
 
@@ -211,14 +220,16 @@ const valid = score10 >= 7;
     cmo,
     score: score10,
     valid,
+    type: "long",
     grade,
-    notes: notes.join(". "),
+    notes,  // ✅ send array, not joined string
     entry,
     target: +(entry * 1.03).toFixed(4),
-    stop:  +(entry * 0.99).toFixed(4),
+    stop: +(entry * 0.99).toFixed(4),
     updated: new Date(last.date).toLocaleTimeString(),
   };
 }
+
 
 function evaluateShort(sym, candles1h, closes4h) {
   if (candles1h.length < 30 || closes4h.length < 20) return null;
@@ -229,20 +240,20 @@ function evaluateShort(sym, candles1h, closes4h) {
 
   const last = candles1h.at(-1);
 
-  // ✅ 1. Downtrend Conditions (LH + LL)
+  // === Downtrend Logic ===
   const isDowntrend = downtrend(candles1h) === "down";
 
-  // ✅ 2. RSI Logic
+  // === RSI Logic ===
   const rsiFalling = rsi < rsiPrev;
   const rsiBelowSMA = rsi < smaRSI;
   const notOversold = rsi > 20;
   const rsiOK = rsiBelowSMA && rsiFalling && notOversold;
 
-  // ✅ 3. ChandeMO Logic
+  // === CMO Logic ===
   const cmoUTurn = cmo < cmoPrev && cmoPrev > 90;
   const cmoOK = cmo >= 50 && cmo <= 100 && cmoUTurn;
 
-  // ✅ 4. Resistance (optional for 1 point)
+  // === Resistance Logic ===
   const nearResistance = last.high >= Math.max(...candles1h.slice(-20).map((c) => c.high)) * 0.995;
 
   const flags = {
@@ -259,18 +270,26 @@ function evaluateShort(sym, candles1h, closes4h) {
     (flags.resistanceOK ? 1 : 0);
 
   const valid = flags.trendOK && flags.rsiOK && flags.cmoOK;
-const almost = flags.trendOK && flags.rsiOK && !flags.cmoOK;
+  const almost = flags.trendOK && flags.rsiOK && !flags.cmoOK;
 
   const grade = valid
     ? score10 >= 9 ? "💎 Strong" : "🔥 Good"
     : almost ? "🕒 Almost" : "–";
 
+  // 🧠 Notes for explanation
   const notes = [];
   if (flags.trendOK) notes.push("Downtrend confirmed");
+  else notes.push("Trend not downward");
+
   if (flags.rsiOK) notes.push("RSI below SMA and falling");
   else if (!notOversold) notes.push("RSI oversold or turning up");
-  if (flags.cmoOK) notes.push("CMO U-turn from top zone");
+  else notes.push("RSI not aligned with downtrend");
+
+  if (flags.cmoOK) notes.push("CMO U-turn from overbought zone");
+  else notes.push("CMO not confirming reversal");
+
   if (flags.resistanceOK) notes.push("Near resistance zone");
+  else notes.push("No clear resistance");
 
   const entry = last.close;
 
@@ -284,13 +303,14 @@ const almost = flags.trendOK && flags.rsiOK && !flags.cmoOK;
     almost,
     type: "short",
     grade,
-    notes: notes.join(". "),
+    notes,  // ✅ return notes as array
     entry,
     stop: +(entry * 1.01).toFixed(4),
     target: +(entry * 0.97).toFixed(4),
     updated: new Date(last.date).toLocaleTimeString(),
   };
 }
+
 
 
 
@@ -376,16 +396,21 @@ function SignalCard({ signal, onSelect }) {
             </Typography>
 
             {/* AI notes */}
-            {notes && (
-              <Typography
-                variant="caption"
-                color="text.secondary"
-                mt={1}
-                display="block"
-              >
-                🧠 {notes}
-              </Typography>
-            )}
+            {Array.isArray(notes) && notes.length > 0 && (
+  <Box mt={1}>
+    {notes.map((n, i) => (
+      <Typography
+        key={i}
+        variant="caption"
+        color="text.secondary"
+        display="block"
+      >
+        🧠 {n}
+      </Typography>
+    ))}
+  </Box>
+)}
+
            {valid || signal.almost ? (
   <Typography variant="body2">
     📉 Type: {signal.type === "short" ? "SHORT" : "LONG"}
