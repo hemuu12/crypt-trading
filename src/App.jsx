@@ -148,6 +148,40 @@ function liquidityGrabPassed(c) {
   return true;
 }
 
+function liquidityGrabScore(candle, recentLows = []) {
+  const body = Math.abs(candle.close - candle.open);
+  const lowerWick = Math.min(candle.open, candle.close) - candle.low;
+
+  let score = 0;
+
+  if (lowerWick > body * 2) score += 40; // long wick → rejection
+  if (candle.close > candle.open) score += 20; // bullish close
+
+  const supportZone = Math.min(...recentLows);
+  if (candle.low <= supportZone * 1.005 && candle.close > supportZone) score += 20; // fakeout recovery
+
+  if (isHammer(candle)) score += 20; // hammer = rejection pattern
+
+  return Math.min(score, 100);
+}
+
+function stopHuntProbabilityShort(candle, recentHighs = []) {
+  const body = Math.abs(candle.close - candle.open);
+  const upperWick = candle.high - Math.max(candle.open, candle.close);
+
+  let score = 0;
+
+  if (upperWick > body * 2) score += 40;
+  if (candle.close < candle.open) score += 20;
+
+  const resistance = Math.max(...recentHighs);
+  if (candle.high >= resistance * 0.995 && candle.close < resistance) score += 20;
+
+  return Math.min(score, 100);
+}
+
+
+
 function downtrend(candles) {
   const seg = candles.slice(-10);
   const lh = seg.every((d, i) => i === 0 || d.high <= seg[i - 1].high);
@@ -212,6 +246,9 @@ function evaluate(sym, candles1h, closes4h) {
   else notes.push("Possible liquidity grab in progress");
 
   const entry = last.close;
+  const recentLows = candles1h.slice(-20).map((c) => c.low);
+  const stopHuntProbability = liquidityGrabScore(last, recentLows);
+
 
   return {
     symbol: sym,
@@ -227,6 +264,7 @@ function evaluate(sym, candles1h, closes4h) {
     target: +(entry * 1.03).toFixed(4),
     stop: +(entry * 0.99).toFixed(4),
     updated: new Date(last.date).toLocaleTimeString(),
+    stopHuntProbability
   };
 }
 
@@ -292,6 +330,9 @@ function evaluateShort(sym, candles1h, closes4h) {
   else notes.push("No clear resistance");
 
   const entry = last.close;
+  const recentHighs = candles1h.slice(-20).map((c) => c.high);
+const stopHuntProbability = stopHuntProbabilityShort(last, recentHighs);
+
 
   return {
     symbol: sym,
@@ -308,6 +349,7 @@ function evaluateShort(sym, candles1h, closes4h) {
     stop: +(entry * 1.01).toFixed(4),
     target: +(entry * 0.97).toFixed(4),
     updated: new Date(last.date).toLocaleTimeString(),
+    stopHuntProbability
   };
 }
 
@@ -336,6 +378,7 @@ function SignalCard({ signal, onSelect }) {
     stop,
     valid,
     notes,
+    stopHuntProbability,
   } = signal;
 
   return (
@@ -395,27 +438,32 @@ function SignalCard({ signal, onSelect }) {
               Score: {score}/10
             </Typography>
 
-            {/* AI notes */}
+            {/* AI notes + Stop-Hunt */}
             {Array.isArray(notes) && notes.length > 0 && (
-  <Box mt={1}>
-    {notes.map((n, i) => (
-      <Typography
-        key={i}
-        variant="caption"
-        color="text.secondary"
-        display="block"
-      >
-        🧠 {n}
-      </Typography>
-    ))}
-  </Box>
-)}
+              <Box mt={1}>
+                {notes.map((n, i) => (
+                  <Typography
+                    key={i}
+                    variant="caption"
+                    color="text.secondary"
+                    display="block"
+                  >
+                    🧠 {n}
+                  </Typography>
+                ))}
+                {typeof stopHuntProbability === "number" && (
+                  <Typography variant="caption" display="block" color="warning.main" mt={0.5}>
+                    🕵️ Stop-Hunt Probability: {stopHuntProbability}%
+                  </Typography>
+                )}
+              </Box>
+            )}
 
-           {valid || signal.almost ? (
-  <Typography variant="body2">
-    📉 Type: {signal.type === "short" ? "SHORT" : "LONG"}
-  </Typography>
-) : null}
+            {(valid || signal.almost) && (
+              <Typography variant="body2">
+                📉 Type: {signal.type === "short" ? "SHORT" : "LONG"}
+              </Typography>
+            )}
           </CardContent>
         </CardActionArea>
       </Card>
