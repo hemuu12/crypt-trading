@@ -22,24 +22,25 @@ import {
   discontinuousTimeScaleProviderBuilder,
   PriceCoordinate,
 } from "react-financial-charts";
+import { Snackbar, Alert } from "@mui/material";
 
 /*********************************
  * CONFIG & GLOBAL CONSTANTS
  *********************************/
 
 const WATCHED = [
-  "BTCUSD", "ETHUSD", "BNBUSD", "SOLUSD", "ADAUSD", "DOGEUSD", "XRPUSD", "DOTUSD", "LTCUSD", "BCHUSD",
-  "LINKUSD", "XLMUSD", "ATOMUSD", "FILUSD", "TRXUSD", "ETCUSD", "EOSUSD", "AAVEUSD", "UNIUSD", "MKRUSD",
-  "NEARUSD", "AVAXUSD", "FTMUSD", "GRTUSD", "CRVUSD", "SUSHIUSD", "1INCHUSD", "LDOUSD",  "OPUSD",
-  "ARBUSD", "RNDRUSD", "IMXUSD", "FETUSD", "COTIUSD", "SANDUSD", "MANAUSD", "GALAUSD", "APEUSD",
-  "PEPEUSD", "SHIBUSD", "SUIUSD", "BONKUSD", "JASMYUSD", "XECUSD", "LPTUSD", "ZILUSD", "ENJUSD",
-  "STORJUSD", "SKLUSD", "OCEANUSD", "ANKRUSD", "VETUSD", "FLOWUSD", "CHZUSD", "ALGOUSD", "HBARUSD", "RLCUSD",
-  "TUSDUSD", "KAVAUSD", "BATUSD", "DGBUSD", "ONEUSD", "SPELLUSD", 
-  "DOGEUSD", "BALUSD", "YFIUSD", "ENSUSD", "COMPUSD", "BLURUSD"
+  "BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "ADAUSDT", "DOGEUSDT", "XRPUSDT", "DOTUSDT", "LTCUSDT", "BCHUSDT",
+  "LINKUSDT", "XLMUSDT", "ATOMUSDT", "FILUSDT", "TRXUSDT", "ETCUSDT", "EOSUSDT", "AAVEUSDT", "UNIUSDT", "MKRUSDT",
+  "NEARUSDT", "AVAXUSDT", "FTMUSDT", "GRTUSDT", "CRVUSDT", "SUSHIUSDT", "1INCHUSDT", "LDOUSDT", "OPUSDT",
+  "ARBUSDT", "RNDRUSDT", "IMXUSDT", "FETUSDT", "COTIUSDT", "SANDUSDT", "MANAUSDT", "GALAUSDT", "APEUSDT",
+  "PEPEUSDT", "SHIBUSDT", "SUIUSDT", "BONKUSDT", "JASMYUSDT", "XECUSDT", "LPTUSDT", "ZILUSDT", "ENJUSDT",
+  "STORJUSDT", "SKLUSDT", "OCEANUSDT", "ANKRUSDT", "VETUSDT", "FLOWUSDT", "CHZUSDT", "ALGOUSDT", "HBARUSDT", "RLCUSDT",
+  "TUSDUSDT", "KAVAUSDT", "BATUSDT", "DGBUSDT", "ONEUSDT", "SPELLUSDT", 
+  "BALUSDT", "YFIUSDT", "ENSUSDT", "COMPUSDT", "BLURUSDT"
 ];
 
 
-const API_REST = "https://api.binance.us/api/v3/klines";
+const API_REST = "https://api.binance.com/api/v3/klines";
 const WS_BASE = "wss://stream.binance.us:9443/ws";
 // Scanner runs on 1‑hour candles
 const INTERVAL = "1h";
@@ -245,10 +246,26 @@ function evaluate(sym, candles1h, closes4h) {
   if (flags.liquidityOK) notes.push("No signs of stop-hunt");
   else notes.push("Possible liquidity grab in progress");
 
-  const entry = last.close;
-  const recentLows = candles1h.slice(-20).map((c) => c.low);
-  const stopHuntProbability = liquidityGrabScore(last, recentLows);
+  
+const entry = last.close;
+const recentLows = candles1h.slice(-20).map((c) => c.low);
+const stopHuntProbability = liquidityGrabScore(last, recentLows);
 
+// ❌ Skip if too risky
+if (stopHuntProbability >= 70) {
+  return {
+    symbol: sym,
+    valid: false,
+    type: "long",
+    score: score10,
+    grade: "⚠️ Risky",
+    notes: [...notes, "⚠️ High stop-hunt risk – avoid entry"],
+    stopHuntProbability,
+    updated: new Date(last.date).toLocaleTimeString(),
+  };
+}
+
+  
 
   return {
     symbol: sym,
@@ -329,9 +346,23 @@ function evaluateShort(sym, candles1h, closes4h) {
   if (flags.resistanceOK) notes.push("Near resistance zone");
   else notes.push("No clear resistance");
 
-  const entry = last.close;
-  const recentHighs = candles1h.slice(-20).map((c) => c.high);
+const entry = last.close;
+const recentHighs = candles1h.slice(-20).map((c) => c.high);
 const stopHuntProbability = stopHuntProbabilityShort(last, recentHighs);
+
+// ❌ Skip if too risky
+if (stopHuntProbability >= 70) {
+  return {
+    symbol: sym,
+    valid: false,
+    type: "short",
+    score: score10,
+    grade: "⚠️ Risky",
+    notes: [...notes, "⚠️ High stop-hunt risk – avoid entry"],
+    stopHuntProbability,
+    updated: new Date(last.date).toLocaleTimeString(),
+  };
+}
 
 
   return {
@@ -352,8 +383,6 @@ const stopHuntProbability = stopHuntProbabilityShort(last, recentHighs);
     stopHuntProbability
   };
 }
-
-
 
 
 
@@ -519,12 +548,15 @@ function CandleChart({ data, trade }) {
 
 
 
-
 export default function App() {
   const [signals, setSignals] = useState([]);
   const [loading, setLoading] = useState(true);
   const [activeSymbol, setActiveSymbol] = useState(null);
   const [filterType, setFilterType] = useState("all"); // 'all' | 'long' | 'short'
+
+const [snackMsg, setSnackMsg] = useState(null);
+
+  
 
   const candleMap1h = useRef(new Map());
   const closes4hMap = useRef(new Map());
@@ -551,68 +583,63 @@ export default function App() {
     setSignals([...longSignals, ...shortSignals]);
   };
 
-  useEffect(() => {
-    const wsMap = new Map();
-    const timers = new Map();
+ useEffect(() => {
+  const stream = WATCHED.map((s) => `${s.toLowerCase()}@kline_${INTERVAL}`).join("/");
+  const ws = new WebSocket(`wss://stream.binance.us:9443/stream?streams=${stream}`);
 
-    const openWS = (sym, retry = 0) => {
-      const ws = new WebSocket(`${WS_BASE}/${sym.toLowerCase()}@kline_${INTERVAL}`);
-      ws.onopen = () => (retry = 0);
-      ws.onclose = () => {
-        const delay = Math.min(30000, 2 ** retry * 1000);
-        timers.set(sym, setTimeout(() => openWS(sym, retry + 1), delay));
-      };
-      ws.onmessage = (e) => {
-        const d = JSON.parse(e.data);
-        if (d.e !== "kline") return;
-        const k = d.k;
-        const candle = {
-          date: new Date(k.t),
-          open: +k.o,
-          high: +k.h,
-          low: +k.l,
-          close: +k.c,
-          volume: +k.v,
-        };
-        const arr = candleMap1h.current.get(d.s) || [];
-        if (k.x) {
-          const updatedCandles = [...arr.slice(-HISTORY_LIMIT + 1), candle];
-          candleMap1h.current.set(d.s, updatedCandles);
+  ws.onmessage = (e) => {
+    const data = JSON.parse(e.data);
+    if (data?.data?.e !== "kline") return;
 
-          const closes4h = closes4hMap.current.get(d.s) || [];
-          const newLong = evaluate(d.s, updatedCandles, closes4h);
-          const newShort = evaluateShort(d.s, updatedCandles, closes4h);
-
-          if ((newLong?.valid || newShort?.valid)) {
-            refresh();
-          }
-        } else {
-          const upd = [...arr];
-          upd[upd.length - 1] = candle;
-          candleMap1h.current.set(d.s, upd);
-        }
-      };
-      wsMap.set(sym, ws);
+    const k = data.data.k;
+    const sym = data.data.s;
+    const candle = {
+      date: new Date(k.t),
+      open: +k.o,
+      high: +k.h,
+      low: +k.l,
+      close: +k.c,
+      volume: +k.v,
     };
 
-    (async () => {
-      await Promise.all(
-        WATCHED.map(async (s) => {
-          candleMap1h.current.set(s, await fetchInitial(s, INTERVAL));
-          const data4h = await fetchInitial(s, RSI_INTERVAL);
-          closes4hMap.current.set(s, data4h.map((d) => d.close));
-        })
-      );
-      setLoading(false);
-      refresh();
-      WATCHED.forEach(openWS);
-    })();
+    const arr = candleMap1h.current.get(sym) || [];
+    if (k.x) {
+      const updatedCandles = [...arr.slice(-HISTORY_LIMIT + 1), candle];
+      candleMap1h.current.set(sym, updatedCandles);
 
-    return () => {
-      wsMap.forEach((ws) => ws.close());
-      timers.forEach((t) => clearTimeout(t));
-    };
-  }, []);
+      const closes4h = closes4hMap.current.get(sym) || [];
+      const newLong = evaluate(sym, updatedCandles, closes4h);
+      const newShort = evaluateShort(sym, updatedCandles, closes4h);
+
+      if (newLong?.valid || newShort?.valid || newLong?.almost || newShort?.almost) {
+        setSnackMsg(`${sym} → New ${newLong?.valid ? "LONG" : "SHORT"} Signal`);
+
+        refresh();
+      }
+    } else {
+      const upd = [...arr];
+      upd[upd.length - 1] = candle;
+      candleMap1h.current.set(sym, upd);
+    }
+  };
+
+  (async () => {
+    await Promise.all(
+      WATCHED.map(async (s) => {
+        candleMap1h.current.set(s, await fetchInitial(s, INTERVAL));
+        const data4h = await fetchInitial(s, RSI_INTERVAL);
+        closes4hMap.current.set(s, data4h.map((d) => d.close));
+      })
+    );
+    setLoading(false);
+    refresh();
+  })();
+
+  return () => {
+    ws.close();
+  };
+}, []);
+
 
   useEffect(() => {
     const id = setInterval(refresh, 60 * 60 * 1000);
@@ -676,6 +703,10 @@ export default function App() {
           />
         </Box>
       )}
+      <Snackbar open={!!snackMsg} autoHideDuration={3000} onClose={() => setSnackMsg(null)}>
+  <Alert severity="info" variant="filled">{snackMsg}</Alert>
+</Snackbar>
+
     </Box>
   );
 }
