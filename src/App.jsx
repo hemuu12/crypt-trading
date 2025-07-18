@@ -396,7 +396,7 @@ const scoreToColor = (s) =>
 /*********************************
  * CARD COMPONENT (replace old SignalCard)
  *********************************/
-function SignalCard({ signal, onSelect }) {
+function SignalCard({ signal, onSelect ,price }) {
   const {
     symbol,
     updated,
@@ -416,25 +416,18 @@ function SignalCard({ signal, onSelect }) {
         sx={{ height: "100%", borderColor: scoreToColor(score) }}
         variant="outlined"
       >
+        
         <CardActionArea onClick={() => onSelect(symbol)} sx={{ height: "100%", p: 1 }}>
           <CardContent>
             {/* header row */}
-            <Stack
-              direction="row"
-              alignItems="center"
-              justifyContent="space-between"
-              spacing={1}
-              mb={1}
-            >
-              <Typography variant="h6" fontWeight={600}>
-                {symbol}
-              </Typography>
-              <Chip
-                size="small"
-                label={grade}
-                color={valid ? "success" : "default"}
-              />
-            </Stack>
+            <Stack direction="row" spacing={1} alignItems="center">
+  <Typography variant="h6" fontWeight={600}>{symbol}</Typography>
+  {price && (
+    <Typography variant="body2" color="text.secondary">
+      ${price.toFixed(4)}
+    </Typography>
+  )}
+</Stack>
 
             <Typography variant="body2" gutterBottom>
               Updated: {updated}
@@ -504,43 +497,7 @@ function SignalCard({ signal, onSelect }) {
 /*********************************
  * CHART COMPONENT
  *********************************/
-function CandleChart({ data, trade }) {
-  if (!data?.length) return null;
-  const scaleProvider = discontinuousTimeScaleProviderBuilder().inputDateAccessor((d) => d.date);
-  const { data: d, xScale, xAccessor, displayXAccessor } = scaleProvider(data);
-  const start = xAccessor(d[Math.max(0, d.length - 100)]);
-  const end = xAccessor(d[d.length - 1]);
-  return (
-    <ChartCanvas
-      height={400}
-      width={800}
-      ratio={1}
-      margin={{ left: 50, right: 50, top: 10, bottom: 30 }}
-      data={d}
-      xScale={xScale}
-      xAccessor={xAccessor}
-      displayXAccessor={displayXAccessor}
-      xExtents={[start, end]}
-    >
-      <Chart id={0} yExtents={(dd) => [dd.high, dd.low]}>
-        <XAxis />
-        <YAxis />
-        <CandlestickSeries />
-        {trade && (
-          <>
-            <PriceCoordinate price={trade.entry} at="right" orient="right" displayFormat={(p) => `Entry → ${p}`}/>
-            <PriceCoordinate price={trade.target} at="right" orient="right" displayFormat={(p) => `Target 🎯 ${p}`}/>
-            <PriceCoordinate price={trade.stop} at="right" orient="right" displayFormat={(p) => `Stop ✋ ${p}`}/>
-               {trade.type === "short" && (
-      <PriceCoordinate price={trade.entry} at="left" orient="left" displayFormat={() => "⬇"} />
-    )}
-          </>
-        )}
-        <ZoomButtons />
-      </Chart>
-    </ChartCanvas>
-  );
-}
+
 
 /*********************************
  * MAIN APP COMPONENT
@@ -552,11 +509,9 @@ export default function App() {
   const [signals, setSignals] = useState([]);
   const [loading, setLoading] = useState(true);
   const [activeSymbol, setActiveSymbol] = useState(null);
-  const [filterType, setFilterType] = useState("all"); // 'all' | 'long' | 'short'
-
-const [snackMsg, setSnackMsg] = useState(null);
-
-  
+  const [filterType, setFilterType] = useState("all");
+  const [prices, setPrices] = useState({});
+  const [snackMsg, setSnackMsg] = useState(null);
 
   const candleMap1h = useRef(new Map());
   const closes4hMap = useRef(new Map());
@@ -577,69 +532,90 @@ const [snackMsg, setSnackMsg] = useState(null);
       const short = evaluateShort(sym, c1h, c4h);
       if (short?.valid || short?.almost) {
         shortSignals.push(short);
+        console.log(`🔻 SHORT signal detected: ${sym}`, short); // ✅ ADDED LOG
       }
     }
 
     setSignals([...longSignals, ...shortSignals]);
   };
 
- useEffect(() => {
-  const stream = WATCHED.map((s) => `${s.toLowerCase()}@kline_${INTERVAL}`).join("/");
-  const ws = new WebSocket(`wss://stream.binance.us:9443/stream?streams=${stream}`);
+  useEffect(() => {
+    const stream = WATCHED.map((s) => `${s.toLowerCase()}@kline_${INTERVAL}`).join("/");
+    const ws = new WebSocket(`wss://stream.binance.us:9443/stream?streams=${stream}`);
 
-  ws.onmessage = (e) => {
-    const data = JSON.parse(e.data);
-    if (data?.data?.e !== "kline") return;
+    const tickerStream = WATCHED.map((s) => `${s.toLowerCase()}@miniTicker`).join("/");
+    const wsPrice = new WebSocket(`wss://stream.binance.com:9443/stream?streams=${tickerStream}`);
 
-    const k = data.data.k;
-    const sym = data.data.s;
-    const candle = {
-      date: new Date(k.t),
-      open: +k.o,
-      high: +k.h,
-      low: +k.l,
-      close: +k.c,
-      volume: +k.v,
+    wsPrice.onmessage = (e) => {
+      const data = JSON.parse(e.data);
+      if (data?.data?.s && data?.data?.c) {
+        setPrices((prev) => ({
+          ...prev,
+          [data.data.s]: +data.data.c,
+        }));
+      }
     };
 
-    const arr = candleMap1h.current.get(sym) || [];
-    if (k.x) {
-      const updatedCandles = [...arr.slice(-HISTORY_LIMIT + 1), candle];
-      candleMap1h.current.set(sym, updatedCandles);
+    ws.onmessage = (e) => {
+      const data = JSON.parse(e.data);
+      if (data?.data?.e !== "kline") return;
 
-      const closes4h = closes4hMap.current.get(sym) || [];
-      const newLong = evaluate(sym, updatedCandles, closes4h);
-      const newShort = evaluateShort(sym, updatedCandles, closes4h);
+      const k = data.data.k;
+      const sym = data.data.s;
+      const candle = {
+        date: new Date(k.t),
+        open: +k.o,
+        high: +k.h,
+        low: +k.l,
+        close: +k.c,
+        volume: +k.v,
+      };
 
-      if (newLong?.valid || newShort?.valid || newLong?.almost || newShort?.almost) {
-        setSnackMsg(`${sym} → New ${newLong?.valid ? "LONG" : "SHORT"} Signal`);
+      const arr = candleMap1h.current.get(sym) || [];
 
-        refresh();
+      if (k.x) {
+        const updatedCandles = [...arr.slice(-HISTORY_LIMIT + 1), candle];
+        candleMap1h.current.set(sym, updatedCandles);
+
+        const closes4h = closes4hMap.current.get(sym) || [];
+        const newLong = evaluate(sym, updatedCandles, closes4h);
+        const newShort = evaluateShort(sym, updatedCandles, closes4h);
+
+        if (newLong?.valid || newShort?.valid || newLong?.almost || newShort?.almost) {
+          setSnackMsg(`${sym} → New ${newLong?.valid ? "LONG" : "SHORT"} Signal`);
+          refresh();
+        }
+      } else {
+        const upd = [...arr];
+        upd[upd.length - 1] = candle;
+        candleMap1h.current.set(sym, upd);
       }
-    } else {
-      const upd = [...arr];
-      upd[upd.length - 1] = candle;
-      candleMap1h.current.set(sym, upd);
-    }
-  };
+    };
 
-  (async () => {
-    await Promise.all(
-      WATCHED.map(async (s) => {
-        candleMap1h.current.set(s, await fetchInitial(s, INTERVAL));
-        const data4h = await fetchInitial(s, RSI_INTERVAL);
-        closes4hMap.current.set(s, data4h.map((d) => d.close));
-      })
-    );
-    setLoading(false);
-    refresh();
-  })();
+    (async () => {
+      await Promise.all(
+        WATCHED.map(async (s) => {
+          candleMap1h.current.set(s, await fetchInitial(s, INTERVAL));
+          const data4h = await fetchInitial(s, RSI_INTERVAL);
+          closes4hMap.current.set(s, data4h.map((d) => d.close));
+        })
+      );
+      setLoading(false);
+      refresh();
 
-  return () => {
-    ws.close();
-  };
-}, []);
+      // ✅ LOG A TEST SHORT EVALUATION FOR BTCUSDT
+      const testSym = "BTCUSDT";
+      const test1h = candleMap1h.current.get(testSym);
+      const test4h = closes4hMap.current.get(testSym);
+      const testShort = evaluateShort(testSym, test1h, test4h);
+      console.log("🧪 BTCUSDT Short Evaluation:", testShort);
+    })();
 
+    return () => {
+      ws.close();
+      wsPrice.close();
+    };
+  }, []);
 
   useEffect(() => {
     const id = setInterval(refresh, 60 * 60 * 1000);
@@ -687,26 +663,21 @@ const [snackMsg, setSnackMsg] = useState(null);
       ) : (
         <Grid container spacing={2} mb={4}>
           {filteredSignals.map((s) => (
-            <SignalCard key={s.symbol + s.type} signal={s} onSelect={setActiveSymbol} />
+            <SignalCard
+              key={s.symbol + s.type}
+              signal={s}
+              onSelect={setActiveSymbol}
+              price={prices[s.symbol]}
+            />
           ))}
         </Grid>
       )}
 
-      {activeSymbol && candleMap1h.current.has(activeSymbol) && (
-        <Box mt={2}>
-          <Typography variant="h5" mb={1}>
-            {activeSymbol} – 1‑Hour Chart
-          </Typography>
-          <CandleChart
-            data={candleMap1h.current.get(activeSymbol)}
-            trade={signals.find((s) => s.symbol === activeSymbol)}
-          />
-        </Box>
-      )}
       <Snackbar open={!!snackMsg} autoHideDuration={3000} onClose={() => setSnackMsg(null)}>
-  <Alert severity="info" variant="filled">{snackMsg}</Alert>
-</Snackbar>
-
+        <Alert severity="info" variant="filled">
+          {snackMsg}
+        </Alert>
+      </Snackbar>
     </Box>
   );
 }
