@@ -43,7 +43,8 @@ const WATCHED = [
 const API_REST = "https://api.binance.com/api/v3/klines";
 const WS_BASE = "wss://stream.binance.us:9443/ws";
 // Scanner runs on 1‑hour candles
-const INTERVAL = "1h";
+const INTERVAL = "2h";
+
 // RSI is sourced from the higher 4‑hour timeframe
 const RSI_INTERVAL = "4h";
 const HISTORY_LIMIT = 500; // candles to keep per timeframe
@@ -190,100 +191,49 @@ function downtrend(candles) {
   return lh && ll ? "down" : "up";
 }
 
-function evaluate(sym, candles1h, closes4h) {
-  if (candles1h.length < 30 || closes4h.length < 20) return null;
+function evaluate(sym, candles2h, closes4h) {
+  if (candles2h.length < 20 || closes4h.length < 20) return null;
 
-  const closes1h = candles1h.map((c) => c.close);
-  const { rsi, rsiPrev, smaRSI, cmo, cmoPrev } = indicators(closes1h, closes4h);
-  if (rsi == null || smaRSI == null || cmo == null) return null;
+  // 2H RSI and SMA (on close prices)
+  const closes2h = candles2h.map((c) => c.close);
+  const rsiSeries = RSI.calculate({ period: 14, values: closes2h });
+  if (rsiSeries.length < 14) return null;
 
-  const last = candles1h.at(-1);
+  const rsi = rsiSeries.at(-1);
+  const rsiSMA = rsiSeries.slice(-14).reduce((a, b) => a + b, 0) / 14;
 
-  // === RSI Logic ===
-  const rsiFacingUp     = rsi > rsiPrev;
-  const rsiAboveSMA     = rsi > smaRSI;
-  const aboutToCrossSMA = rsiPrev < smaRSI && rsi >= smaRSI * 0.98;
-  const notOverbought   = rsi < 80;
-  const rsiOK = (rsiAboveSMA || aboutToCrossSMA) && rsiFacingUp && notOverbought;
+  // 4H trend check
+  const isUptrend = trend(closes4h.map((close, i) => ({
+    high: close,
+    low: close,
+  }))) === "up";
 
-  // === Other Flags ===
-  const flags = {
-    trendOK: trend(candles1h) === "up",
-    rsiOK,
-    cmoOK: cmo >= -100 && cmo <= -60 && cmo > cmoPrev,
-    priceActionOK: bullishPattern(candles1h),
-    supportOK:
-      last.low <=
-      Math.min(...candles1h.slice(-20).map((c) => c.low)) * 1.005,
-    liquidityOK: liquidityGrabPassed(last),
-  };
+  const rsiOK = rsi > rsiSMA;
 
-  const baseScore6 = Object.values(flags).filter(Boolean).length;
-  const score10 = Math.round((baseScore6 / 6) * 10);
+  const valid = isUptrend && rsiOK;
+  if (!valid) return null;
 
-  if (!flags.trendOK) return null;
-  const valid = score10 >= 7;
-
-  const grade = score10 >= 9 ? "💎 Strong" : score10 >= 7 ? "🔥 Good" : "–";
-
-  // 🧠 Detailed Notes
-  const notes = [];
-  if (flags.trendOK) notes.push("Uptrend confirmed");
-  else notes.push("Uptrend not confirmed");
-  
-  if (flags.rsiOK) notes.push("RSI is rising and above/near SMA");
-  else notes.push("RSI not favorable");
-
-  if (flags.cmoOK) notes.push("CMO turning up from oversold zone");
-  else notes.push("CMO not supportive");
-
-  if (flags.priceActionOK) notes.push("Bullish price action detected");
-  else notes.push("No bullish candle pattern");
-
-  if (flags.supportOK) notes.push("Near strong support level");
-  else notes.push("Support not clearly visible");
-
-  if (flags.liquidityOK) notes.push("No signs of stop-hunt");
-  else notes.push("Possible liquidity grab in progress");
-
-  
-const entry = last.close;
-const recentLows = candles1h.slice(-20).map((c) => c.low);
-const stopHuntProbability = liquidityGrabScore(last, recentLows);
-
-// ❌ Skip if too risky
-if (stopHuntProbability >= 70) {
-  return {
-    symbol: sym,
-    valid: false,
-    type: "long",
-    score: score10,
-    grade: "⚠️ Risky",
-    notes: [...notes, "⚠️ High stop-hunt risk – avoid entry"],
-    stopHuntProbability,
-    updated: new Date(last.date).toLocaleTimeString(),
-  };
-}
-
-  
+  const last = candles2h.at(-1);
 
   return {
     symbol: sym,
     rsi,
-    smaRSI,
-    cmo,
-    score: score10,
-    valid,
+    smaRSI: rsiSMA,
+    entry: last.close,
+    target: +(last.close * 1.03).toFixed(4),
+    stop: +(last.close * 0.99).toFixed(4),
+    valid: true,
     type: "long",
-    grade,
-    notes,  // ✅ send array, not joined string
-    entry,
-    target: +(entry * 1.03).toFixed(4),
-    stop: +(entry * 0.99).toFixed(4),
+    score: 10,
+    grade: "💎 Strong",
+    notes: [
+      "4H Uptrend confirmed",
+      "2H RSI is above its 14-period SMA",
+    ],
     updated: new Date(last.date).toLocaleTimeString(),
-    stopHuntProbability
   };
 }
+
 
 
 function evaluateShort(sym, candles1h, closes4h) {
@@ -521,10 +471,11 @@ export default function App() {
     const shortSignals = [];
 
     for (const sym of WATCHED) {
-      const c1h = candleMap1h.current.get(sym) || [];
+      const c2h = candleMap1h.current.get(sym) || [];
       const c4h = closes4hMap.current.get(sym) || [];
 
-      const long = evaluate(sym, c1h, c4h);
+const long = evaluate(sym, c2h, c4h);
+
       if (long?.valid || long?.almost) {
         longSignals.push({ ...long, type: "long" });
       }
