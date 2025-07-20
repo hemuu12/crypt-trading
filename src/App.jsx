@@ -62,9 +62,25 @@ function evaluateLong(sym, candles2h, closes4h) {
   const rsi = rsiSeries.at(-1);
   const rsiSMA = rsiSeries.slice(-14).reduce((a, b) => a + b, 0) / 14;
   const isUptrend = trend(closes4h.map((c) => ({ high: c, low: c }))) === "up";
-  const valid = isUptrend && rsi > rsiSMA;
 
-  if (!valid) return null;
+  let score = 0;
+  const notes = [];
+
+  if (isUptrend) {
+    score += 5;
+    notes.push("✅ Uptrend confirmed (05/10)");
+  } else {
+    notes.push("❌ Not in uptrend");
+  }
+
+  if (rsi > rsiSMA) {
+    score += 5;
+    notes.push("✅ 2H RSI above 14-period SMA (05/10)");
+  } else {
+    notes.push("❌ 2H RSI below 14-period SMA");
+  }
+
+  if (score === 10) notes.push("🎯 Both conditions confirmed (10/10)");
 
   const last = candles2h.at(-1);
   return {
@@ -76,9 +92,9 @@ function evaluateLong(sym, candles2h, closes4h) {
     stop: +(last.close * 0.99).toFixed(4),
     valid: true,
     type: "long",
-    score: 10,
-    grade: "💎 Strong",
-    notes: ["4H Uptrend confirmed", "2H RSI is above its 14-period SMA"],
+    score,
+    grade: score === 10 ? "💎 Strong" : "🟡 Moderate",
+    notes,
     updated: new Date(last.date).toLocaleTimeString(),
   };
 }
@@ -98,7 +114,7 @@ function SignalCard({ signal, price }) {
             <Typography variant="caption">🟢 Entry: {entry}</Typography><br/>
             <Typography variant="caption">🎯 Target: {target}</Typography><br/>
             <Typography variant="caption">⛔ Stop: {stop}</Typography><br/>
-            <LinearProgress variant="determinate" value={100} sx={{ mt: 1, height: 8, borderRadius: 5 }} />
+            <LinearProgress variant="determinate" value={(score / 10) * 100} sx={{ mt: 1, height: 8, borderRadius: 5 }} />
             <Typography variant="caption">Score: {score}/10</Typography>
             {notes.map((n, i) => (
               <Typography key={i} variant="caption" color="text.secondary">🧠 {n}</Typography>
