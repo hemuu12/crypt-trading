@@ -29,7 +29,6 @@ const API_REST = "https://api.binance.com/api/v3/klines";
 const INTERVAL = "2h";
 const RSI_INTERVAL = "4h";
 const HISTORY_LIMIT = 500;
-
 async function fetchInitial(symbol, interval) {
   const url = `${API_REST}?symbol=${symbol}&interval=${interval}&limit=${HISTORY_LIMIT}`;
   const res = await fetch(url);
@@ -100,26 +99,32 @@ function evaluateLong(sym, candles2h, closes4h) {
 }
 
 function SignalCard({ signal, price }) {
-  const { symbol, updated, score, entry, target, stop, notes } = signal;
+  const { symbol, updated, score, entry, target, stop, notes, grade } = signal;
   return (
-    <Grid item xs={12} sm={6} lg={4}>
-      <Card variant="outlined">
-        <CardActionArea sx={{ p: 1 }}>
+    <Grid item xs={12} sm={6} md={4} lg={3}>
+      <Card variant="outlined" sx={{ height: "100%", minHeight: 240, borderRadius: 2, boxShadow: 2 }}>
+        <CardActionArea sx={{ p: 2 }}>
           <CardContent>
-            <Stack direction="row" spacing={1} alignItems="center">
-              <Typography variant="h6" fontWeight={600}>{symbol}</Typography>
-              {price && <Typography variant="body2">${price.toFixed(4)}</Typography>}
+            <Stack direction="row" spacing={1} alignItems="center" justifyContent="space-between">
+              <Typography variant="h6" fontWeight={700}>{symbol}</Typography>
+              {price && <Chip label={`$${price.toFixed(4)}`} size="small" />}
             </Stack>
-            <Typography variant="body2">Updated: {updated}</Typography>
-            <Typography variant="caption">🟢 Entry: {entry}</Typography><br/>
-            <Typography variant="caption">🎯 Target: {target}</Typography><br/>
-            <Typography variant="caption">⛔ Stop: {stop}</Typography><br/>
-            <LinearProgress variant="determinate" value={(score / 10) * 100} sx={{ mt: 1, height: 8, borderRadius: 5 }} />
-            <Typography variant="caption">Score: {score}/10</Typography>
-            {notes.map((n, i) => (
-              <Typography key={i} variant="caption" color="text.secondary">🧠 {n}</Typography>
-            ))}
-            <Typography variant="body2">📈 Type: LONG</Typography>
+            <Typography variant="body2" sx={{ mt: 0.5 }}>⏱️ Updated: {updated}</Typography>
+            <Typography variant="body2">🟢 Entry: <strong>{entry}</strong></Typography>
+            <Typography variant="body2">🎯 Target: <strong>{target}</strong></Typography>
+            <Typography variant="body2">⛔ Stop: <strong>{stop}</strong></Typography>
+
+            <Box mt={1}>
+              <LinearProgress variant="determinate" value={(score / 10) * 100} sx={{ height: 8, borderRadius: 5 }} />
+              <Typography variant="caption">Score: {score}/10 — {grade}</Typography>
+            </Box>
+
+            <Box mt={1.5}>
+              {notes.map((n, i) => (
+                <Typography key={i} variant="body2" color="text.secondary">🧠 {n}</Typography>
+              ))}
+            </Box>
+            <Typography variant="body2" sx={{ mt: 1 }}>📈 Type: <strong>LONG</strong></Typography>
           </CardContent>
         </CardActionArea>
       </Card>
@@ -161,8 +166,8 @@ export default function App() {
 
   return (
     <Box p={2}>
-      <Typography variant="h4" fontWeight={700} gutterBottom>
-        Crypto Long Trade Scanner
+      <Typography variant="h4" fontWeight={700} gutterBottom textAlign="center">
+        🧠 Crypto Long Trade Scanner
       </Typography>
 
       {loading ? (
